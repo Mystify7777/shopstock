@@ -149,7 +149,27 @@ Target files (one at a time):
       values from -20% to 99%, and covers both margin boundary cases
       (exactly 100% and above 100%) plus the sellingPrice === 0 boundary
       on the inverse function. Full suite now 163 tests, all passing.
-- [ ] `frontend/src/domain/stock/stockEventFactory.js` — build ADD/REMOVE events
+- [x] `frontend/src/domain/stock/stockEventFactory.js` —
+      `createAddStockEvent()` and `createRemoveStockEvent()`. Enforces:
+      `recordedAt` is ALWAYS factory-generated and never reads a caller-
+      supplied value (proven by a test that attempts to inject a fake
+      `recordedAt` and confirms it's ignored — this matters because
+      `costCalculations.js`'s "latest known cost" already depends on
+      `recordedAt` being trustworthy); `purchaseDate` defaults to today
+      but is only ever accepted on ADD (REMOVE has no purchaseDate
+      parameter at all — a call-site error, not a silent no-op, if
+      attempted); cost is recorded exactly as given, never looked up or
+      defaulted by the factory itself (prefilling a form field is a UI
+      concern per PRD §11.1); an absent/empty/whitespace-only comment
+      always normalizes to `null`, never to the literal string "No
+      justification provided" (that phrase is display text the UI adds
+      later, not stored fake user input); REMOVE construction does not
+      check or warn about removing more than available stock (PRD §12 —
+      that's a caller/UI decision made before construction, using
+      `Product.quantity`); neither function touches `Product.quantity`.
+      Tested: 40 test cases, 40 passing
+      (`tests/domain/stock/stockEventFactory.test.js`). Full suite now
+      203 tests, all passing.
 - [ ] `frontend/src/domain/stock/applyStockEvent.js` — THE single function allowed to
       compute next `Product.quantity` from (currentQuantity, event); over-removal check
 - [ ] `frontend/src/domain/stock/recomputeQuantityFromEvents.js` — full replay of a

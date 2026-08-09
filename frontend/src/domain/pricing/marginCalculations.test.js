@@ -49,13 +49,13 @@ describe('calculateSuggestedSellingPrice — matches PRD §20 worked example', (
     expect(marginResult.suggestedPrice).toBeCloseTo(100, 6);
   });
 
-  it('matches PRD §21 worked example: cost ₹60 → suggested ₹72 implies ~16.67% margin, and margin 20% on ₹60 gives ₹75', () => {
+  it('keeps suggested-price and actual-margin calculations internally consistent when PRD §21\'s margin is unspecified', () => {
     // PRD §21 shows cost ₹60 and a suggested price of ₹72 without stating
-    // the margin used in that particular example. We don't assert PRD
-    // §21's specific numbers here (the margin isn't given), but we do
-    // confirm our formula is internally consistent: solving suggested
-    // price at 20% on cost ₹60 should round-trip through
-    // calculateActualMargin back to 20%.
+    // the margin used in that particular example, so we can't assert
+    // ₹60 → ₹72 directly. What we CAN assert is that our formula is
+    // self-consistent: solving suggested price at some margin and then
+    // recomputing actual margin from that price must return the same
+    // margin we started with.
     const { suggestedPrice } = calculateSuggestedSellingPrice(60, 20);
     const { marginPercent } = calculateActualMargin(60, suggestedPrice);
     expect(marginPercent).toBeCloseTo(20, 6);
