@@ -47,7 +47,6 @@ Target files (one at a time):
       (`tests/domain/shared/ids.test.js`) — uniqueness across 10k
       generations, UUID v4 shape, and `isValidId` edge cases (empty,
       whitespace, null, undefined, number, object, array).
-- [ ] `frontend/src/domain/shared/dates.js` — date helpers
 - [x] `frontend/src/domain/shared/dates.js` — ISO-8601-string domain
       representation, with an explicit split between date-only values
       (`"YYYY-MM-DD"`, local calendar day — `purchaseDate`,
@@ -63,7 +62,20 @@ Target files (one at a time):
       (`America/Los_Angeles`, `Asia/Kolkata`, `Pacific/Kiritimati`) to
       confirm the date-only/timestamp split is genuinely timezone-safe,
       not just correct in the container's default UTC.
-- [ ] `frontend/src/domain/product/productValidation.js` — name/photo rule
+- [x] `frontend/src/domain/product/productValidation.js` — the PRD §4.1
+      identity rule (name OR photo required, both empty is invalid) plus
+      structural invariants (quantity/threshold non-negative, margin
+      finite, locationIds/tagIds are arrays, id shape). Deliberately does
+      NOT validate UI/form state, referenced-id existence, or photo-capture
+      mechanics — those belong to the UI layer or repositories, not domain.
+      Tested: 35 test cases, 35 passing
+      (`tests/domain/product/productValidation.test.js`) — covers all
+      three valid identity combinations (name-only, photo-only, both),
+      whitespace-only name/photo treated as absent, zero and decimal
+      quantity accepted, negative margin accepted (loss-leader pricing is
+      legitimate), null threshold/margin accepted (means "use global
+      default"), and multiple simultaneous errors accumulating rather than
+      short-circuiting at the first one.
 - [ ] `frontend/src/domain/product/productFactory.js` — create/update product objects
 - [ ] `frontend/src/domain/pricing/costCalculations.js` — latest/average cost
 - [ ] `frontend/src/domain/pricing/marginCalculations.js` — margin + suggested price
