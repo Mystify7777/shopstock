@@ -15,9 +15,13 @@ describe('recomputeQuantityFromEvents — basic cases', () => {
     expect(recomputeQuantityFromEvents([])).toBe(0);
   });
 
-  it('returns 0 for missing/non-array input rather than throwing', () => {
-    expect(recomputeQuantityFromEvents(null)).toBe(0);
-    expect(recomputeQuantityFromEvents(undefined)).toBe(0);
+  it('throws for missing/non-array input rather than silently treating it as an empty history', () => {
+    // Non-array input is a data-layer bug signal for this reconciliation
+    // function, distinct from a genuinely empty (but real) event array.
+    expect(() => recomputeQuantityFromEvents(null)).toThrow(TypeError);
+    expect(() => recomputeQuantityFromEvents(undefined)).toThrow(TypeError);
+    expect(() => recomputeQuantityFromEvents('not-an-array')).toThrow(TypeError);
+    expect(() => recomputeQuantityFromEvents({})).toThrow(TypeError);
   });
 
   it('accumulates a pure ADD sequence', () => {

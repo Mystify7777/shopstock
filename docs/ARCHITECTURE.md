@@ -157,6 +157,15 @@ reconciliation/audit view could compare "units removed per history" against
 that's a reporting concern, not something `applyStockEvent.js` or the event
 itself needs to resolve.
 
+**Corollary for reversal (see `domain/stock/reversal.js`):** reversing a
+clamped over-removal does not restore the pre-removal quantity — it adds
+back exactly what the event says was removed. Example: quantity 5, remove
+8 → clamped to 0; reversing that removal adds 8 back → 8, not 5. This is
+the honest consequence of the event recording "8 were removed": the
+reversal is equally honest about undoing exactly that, not about
+magically knowing only 5 could have actually left the shelf. Documented
+here so it isn't mistaken for a bug later.
+
 A `ProductChangeEvent` records **"a device attempted to set field X to
 value Y at time T."** It is a historical fact and never changes once
 written — including the losing side of a conflict.

@@ -216,6 +216,14 @@ Target files (one at a time):
       reversal event is applied as an ordinary ADD/REMOVE at its array
       position; interpreting reversal semantics is reversal.js's job, not
       this reducer's.
+      (3) UPDATE after review: non-array `events` input (`null`,
+      `undefined`, or any non-array) now THROWS a `TypeError` rather than
+      silently being treated as an empty history. An empty array (`[]`)
+      remains valid and returns 0 — but "no data provided" and "genuinely
+      empty history" are different situations for a reconciliation
+      mechanism, and conflating them risked hiding a repository bug behind
+      a quiet 0. This matches `applyStockEvent()`'s existing strictness on
+      malformed input.
       Tested: 20 test cases, 20 passing
       (`tests/domain/stock/recomputeQuantityFromEvents.test.js`) — covers
       all cases discussed: empty list, pure ADD/REMOVE sequences, decimals,
@@ -229,7 +237,40 @@ Target files (one at a time):
       repeated calls, non-mutation of both events and the input array, and
       `TypeError` propagation (not silent skipping) for a malformed event
       found mid-list. Full suite now 246 tests, all passing.
-- [ ] `frontend/src/domain/stock/reversal.js` — reversal/undo logic
+- [x] `frontend/src/domain/stock/reversal.js` — `createReversalEvent()` is
+      the ONE function used by both PRD §14 (5-second undo toast) and
+      §15 (historical reversal from any point in history) — there is no
+      separate "undo" concept in the domain; the difference between the
+      two is purely *when* a UI caller invokes the same function, which
+      this file has no notion of (no timer, no elapsed-time logic).
+      Builds a compensating event (opposite type, same quantity,
+      `reversalOf` set) plus a narrow patch (`{ reversedBy }`) for the
+      original — the ONLY field ever added to an existing event record,
+      mirroring the `ProductChangeEvent.accepted` exception already
+      established in ARCHITECTURE.md. A reversal of an ADD never invents
+      cost/purchaseDate even though those fields exist on ADD events in
+      general, since a reversal isn't a real new purchase.
+      `canBeReversed()` returns false once `reversedBy` is set, which is
+      what keeps the reference graph a clean singly-linked chain rather
+      than letting two competing reversals attach to one original — per
+      the "reversals are themselves reversible" assumption, undoing an
+      already-reversed event means reversing *the reversal*, a distinct,
+      always-permitted call, not a second attempt on the original.
+      Tested: 32 test cases, 32 passing (`tests/domain/stock/reversal.test.js`)
+      — covers ADD↔REMOVE type-flipping, the narrow originalPatch shape,
+      fresh id/recordedAt on the reversal (never copied from the
+      original), the already-reversed rejection, a full second-order
+      reversal chain (original → reversal₁ → reversal₂) verifying the
+      pointers stay a simple chain and reversal₂ correctly points back at
+      reversal₁ (not the original), an explicit check that no
+      undo-vs-reversal flag exists anywhere on the produced event, and an
+      integration section with `applyStockEvent()` proving reversal
+      actually restores quantity in the ordinary case — and documenting,
+      with a dedicated test plus a new corollary paragraph in
+      `docs/ARCHITECTURE.md`, the honest asymmetry that reversing a
+      clamped over-removal (5 available, 8 removed → clamped 0) restores
+      to 8, not back to 5, since the reversal is honestly undoing what the
+      event actually recorded. Full suite now 278 tests, all passing.
 - [ ] `frontend/src/domain/classification/lowStock.js` — Normal/Low/Out status
 - [ ] `frontend/src/domain/classification/classificationDeletion.js` — fallback rules
 - [ ] Vitest config + tests for each of the above
