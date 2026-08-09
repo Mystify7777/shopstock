@@ -1,0 +1,28 @@
+{
+  "name": "shopstock-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "dexie": "^4.0.8",
+    "fuse.js": "^7.0.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1",
+    "vite-plugin-pwa": "^0.20.1",
+    "vitest": "^2.0.5",
+    "fake-indexeddb": "^6.0.0"
+  }
+}
