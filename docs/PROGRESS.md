@@ -122,7 +122,33 @@ Target files (one at a time):
       treated as known-cost rather than unknown, and confirms the input
       array/events are never mutated. Full suite now 139 tests, all
       passing.
-- [ ] `frontend/src/domain/pricing/marginCalculations.js` — margin + suggested price
+- [x] `frontend/src/domain/pricing/marginCalculations.js` — three
+      deliberately separate functions: `resolveMargin(global, override)`
+      (override wins if a finite number, including 0 or negative;
+      null/undefined falls back to global), `calculateSuggestedSellingPrice
+      (cost, marginPercent)` (solves `price = cost / (1 - margin/100)`;
+      returns `{ suggestedPrice: null, reason }` at margin === 100%
+      (division by zero) and margin > 100% (meaningless), otherwise a
+      valid price — including for negative margins, which produce a
+      below-cost price for deliberate loss-leader pricing), and
+      `calculateActualMargin(cost, sellingPrice)` (solves the inverse,
+      `margin = (price - cost) / price × 100`; returns `{ marginPercent:
+      null, reason }` only when sellingPrice is exactly 0). Uses GROSS
+      MARGIN (percentage of selling price) throughout, never markup
+      (percentage of cost) — the file's header comment states this
+      explicitly since the two are easily confused and disagree
+      numerically on identical inputs. Neither function knows or decides
+      which cost figure (averageKnownCost vs. an explicit estimate) it's
+      being handed — that choice stays with the caller.
+      Tested: 24 test cases, 24 passing
+      (`tests/domain/pricing/marginCalculations.test.js`) — reproduces the
+      PRD §20 worked example exactly (cost ₹80, 20% margin → ₹100),
+      explicitly proves the result is NOT the markup-style answer (₹96),
+      round-trips `calculateSuggestedSellingPrice` →
+      `calculateActualMargin` back to the original margin across nine
+      values from -20% to 99%, and covers both margin boundary cases
+      (exactly 100% and above 100%) plus the sellingPrice === 0 boundary
+      on the inverse function. Full suite now 163 tests, all passing.
 - [ ] `frontend/src/domain/stock/stockEventFactory.js` — build ADD/REMOVE events
 - [ ] `frontend/src/domain/stock/applyStockEvent.js` — THE single function allowed to
       compute next `Product.quantity` from (currentQuantity, event); over-removal check
