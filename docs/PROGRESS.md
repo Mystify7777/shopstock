@@ -98,7 +98,30 @@ Target files (one at a time):
       product's own current value, rejects 0 — inclusion in the patch is
       itself the error, independent of the value). Full suite (121 tests
       across 4 files) run three times back-to-back with no flakiness.
-- [ ] `frontend/src/domain/pricing/costCalculations.js` — latest/average cost
+- [x] `frontend/src/domain/pricing/costCalculations.js` — pure projection
+      over stock-addition events only (REMOVE events ignored entirely —
+      this file computes cost, not stock level). `calculateCostProjection()`
+      returns `{ latestCost, averageKnownCost, knownCostQuantity,
+      totalQuantity }`. "Latest" is resolved by `recordedAt`, explicitly
+      NOT by array position or `purchaseDate` (backdated/out-of-order
+      entries must still resolve correctly). Unknown-cost units are
+      excluded from `averageKnownCost`'s divisor entirely — never treated
+      as ₹0, never backfilled. `estimateCostForUnknownStock()` is a
+      separate, explicitly-labelled function (`{ estimatedCostPerUnit,
+      isEstimate: true }`) per PRD §18, so an estimate can never be
+      silently returned where a recorded fact was expected. No IndexedDB/
+      MongoDB/Product knowledge; consumes plain event objects only.
+      Tested: 18 test cases, 18 passing
+      (`tests/domain/pricing/costCalculations.test.js`) — reproduces the
+      PRD §17 worked example exactly (20×₹50, 10×₹55, 5×unknown →
+      latestCost ₹55, averageKnownCost ₹51.67, 30 of 35 units), proves
+      "latest" is determined by `recordedAt` even when events are fed
+      out of array order and even when `purchaseDate` would suggest a
+      different answer, confirms REMOVE events and zero-quantity events
+      are excluded, confirms a recorded cost of ₹0 (e.g. a free sample) is
+      treated as known-cost rather than unknown, and confirms the input
+      array/events are never mutated. Full suite now 139 tests, all
+      passing.
 - [ ] `frontend/src/domain/pricing/marginCalculations.js` — margin + suggested price
 - [ ] `frontend/src/domain/stock/stockEventFactory.js` — build ADD/REMOVE events
 - [ ] `frontend/src/domain/stock/applyStockEvent.js` — THE single function allowed to
