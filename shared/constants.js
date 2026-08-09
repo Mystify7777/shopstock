@@ -64,10 +64,10 @@ export const STOCK_EVENT_TYPE = {
   REMOVE: 'REMOVE'
 };
 
-// Sync status values used on syncable entities/events.
-export const SYNC_STATUS = {
-  PENDING: 'pending',
-  SYNCING: 'syncing',
-  SYNCED: 'synced',
-  FAILED: 'failed'
-};
+// NOTE: Sync/transport status constants (pending/syncing/done/failed) are
+// intentionally NOT defined here. Per docs/ARCHITECTURE.md, SyncQueueEntry
+// is the only place sync state is tracked — StockEvent, ProductChangeEvent,
+// and Product itself never carry a sync status. Those constants belong
+// alongside the sync queue implementation in data/sync/, not in shared
+// domain-agnostic constants, to avoid inviting the sync-state-on-events
+// mistake this file previously (and briefly) encouraged.

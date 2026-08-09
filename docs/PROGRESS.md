@@ -33,11 +33,20 @@ code was written:
 - [x] Clarified "average known cost" is a shop metric, not accounting
       inventory valuation (no FIFO/LIFO/weighted-average-cost).
 
+- [x] Removed leftover `SYNC_STATUS` constant from `shared/constants.js`
+      (caught during Phase 1 kickoff review — it contradicted the Phase 0.5
+      decision that only `SyncQueueEntry` tracks sync state; a comment now
+      marks its intentional absence so it isn't accidentally re-added).
+
 ## Phase 1 — Domain Model (pure logic, no UI) — IN PROGRESS
 
 Target files (one at a time):
 
-- [ ] `frontend/src/domain/shared/ids.js` — UUID generation
+- [x] `frontend/src/domain/shared/ids.js` — UUID generation (uuid v4, via
+      the `uuid` package v11). Tested: 12/12 passing
+      (`tests/domain/shared/ids.test.js`) — uniqueness across 10k
+      generations, UUID v4 shape, and `isValidId` edge cases (empty,
+      whitespace, null, undefined, number, object, array).
 - [ ] `frontend/src/domain/shared/dates.js` — date helpers
 - [ ] `frontend/src/domain/product/productValidation.js` — name/photo rule
 - [ ] `frontend/src/domain/product/productFactory.js` — create/update product objects
