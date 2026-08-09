@@ -76,7 +76,28 @@ Target files (one at a time):
       legitimate), null threshold/margin accepted (means "use global
       default"), and multiple simultaneous errors accumulating rather than
       short-circuiting at the first one.
-- [ ] `frontend/src/domain/product/productFactory.js` — create/update product objects
+- [x] `frontend/src/domain/product/productFactory.js` — `createProduct()`
+      builds a new product with every field explicitly defaulted (never
+      `undefined`: `quantity: 0`, `archived: false`, `locationIds: []`,
+      `tagIds: []`, nullable fields default to `null`). `updateProduct()`
+      applies a strict PATCH (omitted key = untouched; explicit `null`/`0`/
+      `false`/`''` = applied as given, never treated as "missing"). `id`,
+      `createdAt`, and `quantity` are locked fields — `updateProduct()`
+      throws (not silently ignores) if a patch touches any of them, since
+      quantity may only be set at creation or via `applyStockEvent.js`
+      (docs/ARCHITECTURE.md). The factory does not decide when
+      `ProductChangeEvent`s should be created — that's service-layer
+      orchestration, out of scope here by design.
+      Tested: 38 test cases, 38 passing
+      (`tests/domain/product/productFactory.test.js`) — covers default
+      completeness (no field ever `undefined`), patch-vs-merge semantics
+      (explicit `null`/`0`/`false`/`''` distinguished from omission),
+      `updatedAt` strictly increasing on every patch, immutability of the
+      original object, re-validation surfacing new errors after a patch,
+      and the quantity lock specifically (rejects 37, rejects the
+      product's own current value, rejects 0 — inclusion in the patch is
+      itself the error, independent of the value). Full suite (121 tests
+      across 4 files) run three times back-to-back with no flakiness.
 - [ ] `frontend/src/domain/pricing/costCalculations.js` — latest/average cost
 - [ ] `frontend/src/domain/pricing/marginCalculations.js` — margin + suggested price
 - [ ] `frontend/src/domain/stock/stockEventFactory.js` — build ADD/REMOVE events
