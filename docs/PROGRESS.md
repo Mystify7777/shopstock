@@ -43,11 +43,26 @@ code was written:
 Target files (one at a time):
 
 - [x] `frontend/src/domain/shared/ids.js` — UUID generation (uuid v4, via
-      the `uuid` package v11). Tested: 12/12 passing
+      the `uuid` package v11). Tested: 12 test cases, 12 passing
       (`tests/domain/shared/ids.test.js`) — uniqueness across 10k
       generations, UUID v4 shape, and `isValidId` edge cases (empty,
       whitespace, null, undefined, number, object, array).
 - [ ] `frontend/src/domain/shared/dates.js` — date helpers
+- [x] `frontend/src/domain/shared/dates.js` — ISO-8601-string domain
+      representation, with an explicit split between date-only values
+      (`"YYYY-MM-DD"`, local calendar day — `purchaseDate`,
+      `latestPurchaseDate`) and timestamps (full UTC instant with
+      milliseconds — `recordedAt`, `createdAt`, `updatedAt`). No `Date`
+      objects cross into/out of these helpers; only ISO strings do.
+      Tested: 36 test cases, 36 passing
+      (`tests/domain/shared/dates.test.js`) — includes invalid-calendar-day
+      rejection (`2026-02-30`, `2026-02-29` non-leap-year), format
+      boundaries (midnight/noon 12-hour formatting, month-index off-by-one
+      traps), and string-comparison correctness across year/month
+      boundaries. Verified passing under three different `TZ` settings
+      (`America/Los_Angeles`, `Asia/Kolkata`, `Pacific/Kiritimati`) to
+      confirm the date-only/timestamp split is genuinely timezone-safe,
+      not just correct in the container's default UTC.
 - [ ] `frontend/src/domain/product/productValidation.js` — name/photo rule
 - [ ] `frontend/src/domain/product/productFactory.js` — create/update product objects
 - [ ] `frontend/src/domain/pricing/costCalculations.js` — latest/average cost
