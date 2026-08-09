@@ -32,7 +32,7 @@ Product
   id                    string (client-generated UUID, stable across sync)
   name                  string | null
   photoRef               string | null   (points to a locally stored blob)
-  quantity               number          (decimal-capable)
+  quantity               number          (decimal-capable — MATERIALIZED, see below)
   unitId                 string
   lowStockThreshold      number | null   (null = use global default)
   lowStockDisabled       boolean
@@ -62,7 +62,8 @@ StockEvent
   comment                  string | null
   reversalOf               string | null  (id of the event this reverses)
   reversedBy               string | null  (id of the event that reversed this)
-  syncStatus                'pending' | 'synced' | 'failed'
+
+  # No syncStatus field — see "Events vs. sync state" below.
 
 ProductChangeEvent
   id                      string
@@ -72,7 +73,12 @@ ProductChangeEvent
   oldValue                 any
   newValue                 any
   timestamp                 string (ISO datetime)
-  syncStatus                 'pending' | 'synced' | 'failed'
+  accepted                  boolean  (true = this write is the currently
+                                        accepted value on Product; false =
+                                        this write lost an LWW conflict —
+                                        see "Metadata conflict semantics")
+
+  # No syncStatus field here either.
 
 Category / Location / Tag / Unit
   id, name, archived, isDefault
@@ -81,6 +87,63 @@ User (backend only)
   id, username, passwordHash, refreshTokens: [{ tokenHash, deviceLabel,
   createdAt, revoked }]
 ```
+
+### Events vs. sync state — kept strictly separate
+
+`StockEvent` and `ProductChangeEvent` represent **domain truth**: something
+that happened, permanently. Whether that record has made it to the server
+yet is **transport state**, not domain state, and doesn't belong on the
+event itself.
+
+That transport state lives entirely in `SyncQueueEntry` (see "IndexedDB
+schema" below). A `StockEvent` is written once and never mutated again to
+add a `syncStatus` field — sync progress is tracked by whether a
+corresponding `syncQueue` entry still exists and what its `status` is. This
+keeps the event tables genuinely append-only/immutable, which is what Rule 6
+("never destroy history to make a correction") and the reversal model both
+depend on.
+
+### `Product.quantity` — materialized state, not a second source of truth
+
+The event stream (`StockEvent[]` for a product) is the **authoritative**
+record of stock movement. `Product.quantity` is a **materialized
+projection** of that stream, kept on the product document purely so reads
+(product list, dashboard, low-stock checks) don't need to replay the full
+event history on every render.
+
+Concretely:
+
+- `Product.quantity` is only ever written by one function:
+  `domain/stock/applyStockEvent.js`, which takes the product's current
+  quantity and a new event and returns the next quantity. Nothing else is
+  permitted to set `quantity` directly.
+- If the materialized value and the event stream ever disagree, **the event
+  stream wins**. A `recomputeQuantityFromEvents(productId)` domain function
+  will exist (Phase 3) purely for this reconciliation case — e.g. after a
+  sync pulls down events this device didn't have — and repositories should
+  call it after any bulk/sync write to a product's event history, not only
+  on local mutations.
+- This distinction must be explicit in code comments wherever `quantity` is
+  written, not just in this doc.
+
+### Metadata conflict semantics — event vs. state
+
+A `ProductChangeEvent` records **"a device attempted to set field X to
+value Y at time T."** It is a historical fact and never changes once
+written — including the losing side of a conflict.
+
+`Product[field]` records **"the currently accepted value."** It is the
+*result* of applying LWW across whatever `ProductChangeEvent`s exist for
+that field, not a separate opinion that happens to usually agree with them.
+
+So: every metadata write always produces a `ProductChangeEvent`. The
+`accepted` flag on that event says whether it was the one that ended up
+determining `Product[field]` at write time. If a later sync reveals an
+earlier-clock-but-later-arriving write should have won, the sync layer
+updates `Product[field]` and may flip `accepted` flags accordingly — but it
+does not delete or edit the losing event's `oldValue`/`newValue`. See PRD
+§32: "the earlier change should remain represented in product-change
+history."
 
 ### Why cost/margin fields are derived, not stored
 
@@ -91,13 +154,20 @@ stored value and the event history that should produce it. Domain functions
 recompute them from `StockEvent[]` on read; if this becomes a performance
 issue at scale we can memoize per-product, but correctness comes first.
 
+**Terminology note:** "average known cost" here is a practical
+shop-management figure, not an accounting inventory-valuation method. We
+are explicitly *not* implementing FIFO, LIFO, or weighted-average-cost
+accounting — just "what have I generally been paying," per PRD §17. If a
+future requirement needs real inventory accounting, that's a distinct
+feature, not an extension of this calculation.
+
 ## IndexedDB schema (Dexie)
 
 ```js
 db.version(1).stores({
   products:             'id, name, categoryId, archived, updatedAt',
-  stockEvents:          'id, productId, recordedAt, syncStatus',
-  productChangeEvents:  'id, productId, timestamp, syncStatus',
+  stockEvents:          'id, productId, recordedAt',
+  productChangeEvents:  'id, productId, timestamp',
   categories:            'id, archived',
   locations:              'id, archived',
   tags:                    'id, archived',
@@ -108,10 +178,37 @@ db.version(1).stores({
 });
 ```
 
+Note `stockEvents`/`productChangeEvents` no longer index `syncStatus` —
+that field doesn't exist on them (see "Events vs. sync state" above). Sync
+progress is queried from `syncQueue` instead, joined by `entityId` when
+needed.
+
 Compound/secondary indexes are deliberately minimal at v1 — Dexie table
 scans over a small shop's inventory (hundreds, not millions, of products)
 are fast enough. We will add indexes only if profiling says so (Rule 2:
 no abstraction without a concrete reason).
+
+### Schema migrations are mandatory from day one
+
+IndexedDB will hold a real shop's real data, potentially months of stock
+history, on a single phone with no automatic backup. Losing or corrupting it
+during a schema change is not an acceptable failure mode. So, starting from
+the very first Dexie store definition:
+
+- Every schema change is a new `db.version(n)` block, never an edit to an
+  existing `version()` call. `version(1)` above is permanent once shipped.
+- Each version bump that changes stored shape (not just adding an index)
+  includes an `.upgrade(tx => ...)` migration function, even if that
+  function currently does nothing but exists as a placeholder — this keeps
+  the pattern consistent so nobody forgets to add one when it's actually
+  needed.
+- Migrations live in `frontend/src/data/db/schema.js` with one clearly
+  version-numbered block per change, plus a comment describing *why* the
+  version changed.
+- Before Phase 2 ships the first real `db.version(1)`, we write a short test
+  that opens the DB, seeds representative rows, and confirms the schema
+  matches expectations — this becomes the harness later versions' upgrade
+  functions are tested against.
 
 ## MongoDB schema
 
@@ -120,30 +217,87 @@ Mirrors the domain model closely. Single-tenant (one shop account), so no
 the stable identity used for idempotent upserts/inserts.
 
 - `products` — upserted by `clientId`, last-write-wins per field via
-  `updatedAt` comparison done in the sync controller.
+  `updatedAt` comparison done in the sync controller. Stored `quantity` is
+  the materialized value — server does not independently derive it from
+  `stockEvents` on every read, but a reconciliation job/endpoint may
+  recompute it from the event collection if drift is ever suspected.
 - `stockEvents` — insert-only. Server rejects/ignores duplicate `clientId`.
-- `productChangeEvents` — insert-only, same dedup strategy.
+  No `syncStatus`-equivalent field server-side either; a document existing
+  in this collection simply means it has synced.
+- `productChangeEvents` — insert-only, same dedup strategy. Carries
+  `accepted` (see "Metadata conflict semantics") which *can* be updated
+  after the fact if a later-arriving-but-earlier-timestamped write changes
+  which record is authoritative — this is the one exception to "events are
+  never mutated," and it's narrowly scoped to this single boolean flag.
 - `categories` / `locations` / `tags` / `units` — upserted by `clientId`.
 - `users` — single document in v1, holds bcrypt hash + refresh token records.
 
 ## Sync model
 
+`SyncQueueEntry` is the **only** place sync/transport state is tracked.
+Domain tables (`stockEvents`, `productChangeEvents`, `products`, etc.) never
+carry a `syncStatus` field themselves — see "Events vs. sync state" above.
+
+```
+SyncQueueEntry
+  localId       auto-increment (local only, never synced)
+  entityType     'stockEvent' | 'productChangeEvent' | 'product' |
+                  'category' | 'location' | 'tag' | 'unit'
+  entityId        string (the clientId of the affected record)
+  operation        'insert' | 'upsert'
+  payload           the data to send
+  clientId          string (idempotency key — same as entityId for inserts)
+  attempts          number
+  status             'pending' | 'syncing' | 'done' | 'failed'
+  createdAt          ISO datetime
+  lastError           string | null
+```
+
 Two mutation shapes, matching PRD §31/§32:
 
-1. **Additive** (`StockEvent`, `ProductChangeEvent`): queued as inserts.
-   Deduplicated server-side by `clientId` so re-delivery is a no-op —
-   this is what makes the queue safe to retry after a dropped response.
-2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued as
-   upserts carrying `updatedAt`. Server applies last-write-wins by comparing
-   `updatedAt` timestamps. A write that loses the comparison is *not*
-   discarded — the client that lost still has a `ProductChangeEvent`
-   recording what it tried to set, per PRD §32 ("the earlier change should
-   remain represented in product-change history").
+1. **Additive** (`StockEvent`, `ProductChangeEvent`): queued with
+   `operation: 'insert'`. Deduplicated server-side by `clientId` so
+   re-delivery is a no-op — this is what makes the queue safe to retry
+   after a dropped response.
+2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued with
+   `operation: 'upsert'`, carrying `updatedAt`. Server applies last-write-wins
+   by comparing `updatedAt` timestamps. A write that loses the comparison is
+   *not* discarded — the client that lost still has a `ProductChangeEvent`
+   recording what it tried to set (with `accepted: false`), per PRD §32
+   ("the earlier change should remain represented in product-change
+   history").
 
-`syncQueue` entries: `{ localId, entityType, entityId, operation, payload,
-clientId, attempts, status, createdAt, lastError }`. The sync engine drains
-the queue in order, retries with backoff on failure, and marks entries
-`done` only after a confirmed server response.
+The sync engine drains the queue in order, retries with backoff on failure,
+and marks entries `done` only after a confirmed server response. Querying
+"has event X synced yet" is answered by looking up its `syncQueue` entry by
+`entityId`, not by reading a field on the event itself.
+
+## Photo storage — provider abstraction
+
+The PRD's zero-cost target (§40) and the architecture's use of a specific
+example provider (Cloudinary) are two different concerns and shouldn't be
+coupled. The domain layer and sync engine must never import a specific
+storage SDK directly.
+
+```
+domain/ and data/sync/
+        ↓ depends on (interface only)
+PhotoStorage                      — abstract interface:
+  save(localPhotoId, blob)          store a photo, return a reference
+  getUrl(remoteRef)                  resolve a reference to a fetchable URL
+  delete(remoteRef)
+
+data/photos/
+  LocalPhotoRepository.js           — IndexedDB blob store (`photos` table)
+  RemotePhotoStorage.js             — interface above, implemented by:
+    providers/CloudinaryPhotoStorage.js   (or whatever we pick later)
+```
+
+The sync engine only ever calls the `PhotoStorage` interface. Swapping
+Cloudinary for another free-tier provider (or a self-hosted option) later
+means writing one new file under `providers/`, not touching sync or domain
+code. `docs/ARCHITECTURE.md`'s earlier mention of Cloudinary is an example
+of a possible provider, not a hard dependency.
 
 ## Authentication
 
@@ -166,14 +320,43 @@ default; revisit any of them at any time:
 
 1. **Average known cost** is computed across *all-time* recorded-cost stock
    additions (not just currently in-stock units) — matches the worked
-   example in PRD §17 directly.
+   example in PRD §17 directly. This is a practical shop metric, not
+   accounting inventory valuation (no FIFO/LIFO/weighted-average-cost).
 2. **Reversals are themselves reversible.** Keeps the mental model uniform
    ("every event can be reversed") rather than adding a special case.
 3. **Photos**: compressed blob stored locally in IndexedDB (`photos` table)
-   for offline-first use; on sync, uploaded to a free-tier object storage
-   service (e.g. Cloudinary) rather than embedded in MongoDB documents, to
-   keep documents small and stay within the zero-cost target (PRD §40).
-   Only a reference URL is stored server-side once uploaded.
+   for offline-first use; on sync, uploaded via a `PhotoStorage` interface
+   to a free-tier object storage provider (see "Photo storage — provider
+   abstraction"), rather than embedded in MongoDB documents, to keep
+   documents small and stay within the zero-cost target (PRD §40). Only a
+   reference URL is stored server-side once uploaded. The specific provider
+   is an implementation detail behind the interface, not an architectural
+   commitment.
+
+## Phase 0.5 — architecture correction log
+
+Before Phase 1 implementation began, a review pass caught several places
+where the initial design risked two competing sources of truth. Corrections
+made, all reflected in the sections above:
+
+1. Removed `syncStatus` from `StockEvent`/`ProductChangeEvent` — sync state
+   now lives exclusively in `SyncQueueEntry`, keeping event tables genuinely
+   immutable.
+2. Made `Product.quantity` explicitly a materialized projection of the
+   `StockEvent` stream, owned by exactly one function
+   (`domain/stock/applyStockEvent.js`), never written directly elsewhere.
+3. Formalized metadata conflict semantics: `ProductChangeEvent` = "what was
+   attempted," `Product[field]` = "what's currently accepted" — distinct
+   concepts, not two copies of the same fact.
+4. Introduced the `PhotoStorage` interface so no specific provider (e.g.
+   Cloudinary) is hardwired into domain or sync code.
+5. Made Dexie schema migrations mandatory from `version(1)` onward, with a
+   test harness requirement before Phase 2 ships the first real schema.
+
+No PRD requirements changed — this was purely tightening the technical
+design underneath them, per Build Brief Rule 10 (changes to *product*
+requirements need explicit identification; this is an implementation-detail
+correction, not a product-requirements change).
 
 ## Testing strategy
 
