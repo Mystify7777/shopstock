@@ -170,10 +170,65 @@ Target files (one at a time):
       Tested: 40 test cases, 40 passing
       (`tests/domain/stock/stockEventFactory.test.js`). Full suite now
       203 tests, all passing.
-- [ ] `frontend/src/domain/stock/applyStockEvent.js` — THE single function allowed to
-      compute next `Product.quantity` from (currentQuantity, event); over-removal check
-- [ ] `frontend/src/domain/stock/recomputeQuantityFromEvents.js` — full replay of a
-      product's event stream, for reconciliation after sync (Phase 3/6)
+- [x] `frontend/src/domain/stock/applyStockEvent.js` — the sole writer of
+      the next `Product.quantity`. `applyStockEvent(currentQuantity,
+      event)` → `nextQuantity`. ADD adds; REMOVE subtracts and is CLAMPED
+      AT 0 rather than going negative or being rejected — this resolves a
+      real tension between PRD §12 (over-removal must be *allowed* after a
+      warning) and `productValidation.js` (quantity can never be negative):
+      the `StockEvent` itself is recorded exactly as requested (e.g.
+      `quantity: 8` even if only 5 were available) and is never mutated to
+      fit; only the materialized `Product.quantity` is floored at 0. The
+      warning itself is not this function's concern — a separate,
+      side-effect-free `wouldOverRemove(currentQuantity, event)` exists
+      purely to drive that UI prompt before construction/application, and
+      has no effect on what `applyStockEvent()` does. Full reasoning
+      recorded in `docs/ARCHITECTURE.md` under "The over-removal
+      reconciliation." This function throws (does not silently tolerate)
+      on a malformed event or a negative starting quantity, since either
+      reaching this point indicates an upstream bug, not a case to handle
+      gracefully.
+      Tested: 23 test cases, 23 passing
+      (`tests/domain/stock/applyStockEvent.test.js`) — covers ordinary
+      ADD/REMOVE, the exact clamping scenario from the discussion (current
+      5, remove 8 → 0), confirms the event itself is never mutated to
+      reflect the clamped amount, confirms no negative result is possible
+      across a matrix of current/removal combinations including decimals,
+      and a combined-flow test demonstrating `wouldOverRemove()` +
+      `applyStockEvent()` used together as the UI/service layer is
+      expected to use them. Full suite now 226 tests, all passing.
+- [x] `frontend/src/domain/stock/recomputeQuantityFromEvents.js` — full
+      replay of a product's event history, built on `applyStockEvent()`
+      (no duplicated arithmetic). Two decisions locked in per discussion:
+      (1) replay ALWAYS starts from 0, never from the current
+      `Product.quantity` — an already-corrupted materialized value must
+      not contaminate the reconciliation meant to fix it; the function
+      signature itself only accepts an events array, with no
+      initial-quantity parameter, so this can't quietly regress later.
+      (2) replay preserves the SUPPLIED array order and never sorts by
+      `recordedAt` or anything else — quantity is order-sensitive in a way
+      cost isn't, because REMOVE clamps at zero
+      (`applyStockEvent.js`/`docs/ARCHITECTURE.md`): the same three events
+      in a different order produce a different final quantity (10 vs. 7 in
+      the ADD-5/REMOVE-8/ADD-10 vs. ADD-10/ADD-5/REMOVE-8 example), so
+      silently normalizing order would silently change the answer. This
+      file also does not special-case `reversalOf`/`reversedBy` — a
+      reversal event is applied as an ordinary ADD/REMOVE at its array
+      position; interpreting reversal semantics is reversal.js's job, not
+      this reducer's.
+      Tested: 20 test cases, 20 passing
+      (`tests/domain/stock/recomputeQuantityFromEvents.test.js`) — covers
+      all cases discussed: empty list, pure ADD/REMOVE sequences, decimals,
+      exact-removal-to-zero, over-removal clamping mid-sequence, a
+      subsequent ADD correctly starting from the clamped zero rather than
+      a leaked negative, the two order-sensitivity worked examples proven
+      to diverge, an explicit proof that `recordedAt` ordering is ignored
+      in favor of array order, a structural check that the function has
+      exactly one parameter (guards against a future regression
+      reintroducing a starting-quantity parameter), determinism across
+      repeated calls, non-mutation of both events and the input array, and
+      `TypeError` propagation (not silent skipping) for a malformed event
+      found mid-list. Full suite now 246 tests, all passing.
 - [ ] `frontend/src/domain/stock/reversal.js` — reversal/undo logic
 - [ ] `frontend/src/domain/classification/lowStock.js` — Normal/Low/Out status
 - [ ] `frontend/src/domain/classification/classificationDeletion.js` — fallback rules

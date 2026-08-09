@@ -126,7 +126,36 @@ Concretely:
 - This distinction must be explicit in code comments wherever `quantity` is
   written, not just in this doc.
 
-### Metadata conflict semantics — event vs. state
+**The over-removal reconciliation.** PRD §12 requires that a user be
+*allowed* to remove more stock than is currently available, after a
+warning — the operation must not be silently blocked. Separately,
+`productValidation.js` enforces that `Product.quantity` can never be
+negative, which is a genuine structural invariant (a negative on-shelf
+count is meaningless and would break every display/comparison downstream).
+These only conflict if the event and the materialized quantity are assumed
+to tell the same story — they don't have to:
+
+- The `StockEvent` itself is recorded **exactly as it happened** — if the
+  user removed 8 units, the event says `quantity: 8`, permanently,
+  regardless of how many were actually available. The event is never
+  mutated, annotated, or reduced to fit.
+- `Product.quantity` (the materialized projection) is **clamped at 0** by
+  `applyStockEvent.js` — `next = max(0, current - event.quantity)`. The
+  shop's on-shelf count stops at the floor; it does not go negative.
+- The over-removal *warning* itself ("Only 5 units are available. Remove 8
+  anyway?") is a UI/service-layer decision made **before** the event is
+  constructed and applied — `applyStockEvent.js` has no warning branch and
+  never rejects an over-removal; a separate, side-effect-free question
+  function (`wouldOverRemove(currentQuantity, event)`) exists purely to
+  drive that UI prompt, and calling it (or not) has no effect on what
+  `applyStockEvent()` does.
+
+Net effect: no negative `Product.quantity` ever, no loss of the historical
+removal event, no silent rejection of a user-confirmed action. A future
+reconciliation/audit view could compare "units removed per history" against
+"units the shelf actually had" and surface any resulting discrepancy — but
+that's a reporting concern, not something `applyStockEvent.js` or the event
+itself needs to resolve.
 
 A `ProductChangeEvent` records **"a device attempted to set field X to
 value Y at time T."** It is a historical fact and never changes once
