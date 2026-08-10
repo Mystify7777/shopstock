@@ -172,11 +172,13 @@ Target files (one at a time):
       203 tests, all passing.
 - [x] `frontend/src/domain/stock/applyStockEvent.js` — the sole writer of
       the next `Product.quantity`. `applyStockEvent(currentQuantity,
-      event)` → `nextQuantity`. ADD adds; REMOVE subtracts and is CLAMPED
-      AT 0 rather than going negative or being rejected — this resolves a
-      real tension between PRD §12 (over-removal must be *allowed* after a
-      warning) and `productValidation.js` (quantity can never be negative):
-      the `StockEvent` itself is recorded exactly as requested (e.g.
+      event)` → `{ nextQuantity, appliedQuantity }` (see "UPDATE after
+      review" below for why this is an object, not a bare number). ADD
+      adds; REMOVE subtracts and is CLAMPED AT 0 rather than going
+      negative or being rejected — this resolves a real tension between
+      PRD §12 (over-removal must be *allowed* after a warning) and
+      `productValidation.js` (quantity can never be negative): the
+      `StockEvent` itself is recorded exactly as requested (e.g.
       `quantity: 8` even if only 5 were available) and is never mutated to
       fit; only the materialized `Product.quantity` is floored at 0. The
       warning itself is not this function's concern — a separate,
@@ -188,15 +190,31 @@ Target files (one at a time):
       on a malformed event or a negative starting quantity, since either
       reaching this point indicates an upstream bug, not a case to handle
       gracefully.
-      Tested: 23 test cases, 23 passing
+      UPDATE after review: initially returned a bare `nextQuantity`
+      number. Review of `reversal.js` surfaced a real bug this shape
+      enabled — reversing a clamped over-removal would blindly re-add the
+      event's *requested* quantity, manufacturing inventory that never
+      existed (quantity 5, REMOVE 8 → clamped 0 → naive reversal → 8, not
+      back to 5). Fixed by returning `{ nextQuantity, appliedQuantity }`:
+      `appliedQuantity` is the TRUE effect on inventory (`event.quantity`
+      for ADD; `min(event.quantity, currentQuantity)` for REMOVE), only
+      knowable at the exact moment of applying against a specific
+      `currentQuantity`, and threaded through to `reversal.js` by whatever
+      commits the event. Full corrected reasoning in
+      `docs/ARCHITECTURE.md`, "Reversal and `appliedQuantity`."
+      Tested: 28 test cases, 28 passing
       (`tests/domain/stock/applyStockEvent.test.js`) — covers ordinary
-      ADD/REMOVE, the exact clamping scenario from the discussion (current
-      5, remove 8 → 0), confirms the event itself is never mutated to
-      reflect the clamped amount, confirms no negative result is possible
-      across a matrix of current/removal combinations including decimals,
-      and a combined-flow test demonstrating `wouldOverRemove()` +
-      `applyStockEvent()` used together as the UI/service layer is
-      expected to use them. Full suite now 226 tests, all passing.
+      ADD/REMOVE, the exact clamping scenario (current 5, remove 8 →
+      nextQuantity 0), confirms `appliedQuantity` equals the requested
+      quantity when unclamped and the true smaller amount when clamped,
+      confirms `appliedQuantity === currentQuantity - nextQuantity`
+      always holds in the clamped case, confirms the event itself is
+      never mutated, confirms `nextQuantity` is never negative and
+      `appliedQuantity` never exceeds what was available across a matrix
+      of combinations including decimals, and a combined-flow test
+      demonstrating `wouldOverRemove()` + `applyStockEvent()` used
+      together with `appliedQuantity` explicitly retained for a possible
+      later reversal.
 - [x] `frontend/src/domain/stock/recomputeQuantityFromEvents.js` — full
       replay of a product's event history, built on `applyStockEvent()`
       (no duplicated arithmetic). Two decisions locked in per discussion:
@@ -237,18 +255,19 @@ Target files (one at a time):
       repeated calls, non-mutation of both events and the input array, and
       `TypeError` propagation (not silent skipping) for a malformed event
       found mid-list. Full suite now 246 tests, all passing.
-- [x] `frontend/src/domain/stock/reversal.js` — `createReversalEvent()` is
-      the ONE function used by both PRD §14 (5-second undo toast) and
-      §15 (historical reversal from any point in history) — there is no
-      separate "undo" concept in the domain; the difference between the
-      two is purely *when* a UI caller invokes the same function, which
-      this file has no notion of (no timer, no elapsed-time logic).
-      Builds a compensating event (opposite type, same quantity,
-      `reversalOf` set) plus a narrow patch (`{ reversedBy }`) for the
-      original — the ONLY field ever added to an existing event record,
-      mirroring the `ProductChangeEvent.accepted` exception already
-      established in ARCHITECTURE.md. A reversal of an ADD never invents
-      cost/purchaseDate even though those fields exist on ADD events in
+- [x] `frontend/src/domain/stock/reversal.js` — `createReversalEvent(originalEvent,
+      appliedQuantity)` is the ONE function used by both PRD §14
+      (5-second undo toast) and §15 (historical reversal from any point in
+      history) — there is no separate "undo" concept in the domain; the
+      difference between the two is purely *when* a UI caller invokes the
+      same function, which this file has no notion of (no timer, no
+      elapsed-time logic). Builds a compensating event (opposite type,
+      `quantity` set to `appliedQuantity`, `reversalOf` set) plus a narrow
+      patch (`{ reversedBy }`) for the original — the ONLY field ever
+      added to an existing event record, mirroring the
+      `ProductChangeEvent.accepted` exception already established in
+      ARCHITECTURE.md. A reversal of an ADD never invents cost/
+      purchaseDate even though those fields exist on ADD events in
       general, since a reversal isn't a real new purchase.
       `canBeReversed()` returns false once `reversedBy` is set, which is
       what keeps the reference graph a clean singly-linked chain rather
@@ -256,21 +275,33 @@ Target files (one at a time):
       the "reversals are themselves reversible" assumption, undoing an
       already-reversed event means reversing *the reversal*, a distinct,
       always-permitted call, not a second attempt on the original.
-      Tested: 32 test cases, 32 passing (`tests/domain/stock/reversal.test.js`)
+      BUG FOUND AND FIXED before this file was considered done: the first
+      version reversed `originalEvent.quantity` directly (the *requested*
+      amount). Review caught that this silently manufactures inventory
+      when the original event was a clamped over-removal — quantity 5,
+      REMOVE 8 → clamped to 0 → naive reversal adds back 8 → 8, a net +3
+      units that were never real. `createReversalEvent()` now REQUIRES an
+      explicit `appliedQuantity` parameter (the true effect captured from
+      `applyStockEvent()`'s return value at the moment the original event
+      was committed) and reverses that instead. Missing/invalid
+      `appliedQuantity` is now a rejected input, same as any other
+      malformed-input case. See `docs/ARCHITECTURE.md`, "Reversal and
+      `appliedQuantity`," for the full corrected reasoning.
+      Tested: 40 test cases, 40 passing (`tests/domain/stock/reversal.test.js`)
       — covers ADD↔REMOVE type-flipping, the narrow originalPatch shape,
       fresh id/recordedAt on the reversal (never copied from the
       original), the already-reversed rejection, a full second-order
       reversal chain (original → reversal₁ → reversal₂) verifying the
       pointers stay a simple chain and reversal₂ correctly points back at
       reversal₁ (not the original), an explicit check that no
-      undo-vs-reversal flag exists anywhere on the produced event, and an
-      integration section with `applyStockEvent()` proving reversal
-      actually restores quantity in the ordinary case — and documenting,
-      with a dedicated test plus a new corollary paragraph in
-      `docs/ARCHITECTURE.md`, the honest asymmetry that reversing a
-      clamped over-removal (5 available, 8 removed → clamped 0) restores
-      to 8, not back to 5, since the reversal is honestly undoing what the
-      event actually recorded. Full suite now 278 tests, all passing.
+      undo-vs-reversal flag exists anywhere on the produced event, and a
+      dedicated "THE OVER-REMOVAL REVERSAL FIX" section directly
+      reproducing the bug-report scenario end-to-end: quantity 5 → REMOVE
+      8 → clamped 0 → reverse → back to EXACTLY 5, not 8 — plus a
+      regression guard proving unclamped reversals still restore the
+      exact original quantity, and rejection tests for a missing/zero/
+      negative/non-numeric `appliedQuantity`. Full suite now 291 tests,
+      all passing.
 - [ ] `frontend/src/domain/classification/lowStock.js` — Normal/Low/Out status
 - [ ] `frontend/src/domain/classification/classificationDeletion.js` — fallback rules
 - [ ] Vitest config + tests for each of the above

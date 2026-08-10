@@ -37,6 +37,28 @@
 // reversal" below for the one rule that keeps this clean: an event that
 // has ALREADY been reversed cannot be reversed again directly; you reverse
 // its reversal instead, which is a different, always-permitted operation.
+//
+// THE OVER-REMOVAL REVERSAL FIX (corrects an earlier version of this
+// file): reversing an event must undo its TRUE applied effect on
+// inventory, not blindly re-apply the event's own requested `quantity`.
+// Those two numbers differ exactly when the original event was a REMOVE
+// that got clamped by applyStockEvent.js's over-removal policy — e.g.
+// quantity available = 5, REMOVE requests 8, only 5 actually leaves the
+// shelf (materialized quantity floors at 0). If a reversal blindly added
+// back the requested 8, "undo" would manufacture 3 units of inventory
+// that were never real. So createReversalEvent() takes the ACTUAL applied
+// quantity as an explicit parameter — it cannot be derived from the event
+// alone (the event only ever records what was requested, by design; see
+// applyStockEvent.js), so the caller (whoever calls applyStockEvent() in
+// the first place) must capture `appliedQuantity` from that call's return
+// value at the moment the original event is committed, and pass it
+// through when a reversal is later requested. This is the one piece of
+// "applied effect" information that has to travel with the event's
+// reference from commit-time to reversal-time — it is NOT written onto
+// the event itself (events remain immutable/requested-quantity-only); it
+// is the caller's job to have it on hand (e.g. a repository storing it
+// alongside the event, or a service re-deriving it via
+// recomputeQuantityFromEvents() on the events strictly before this one).
 
 import { generateId } from '../shared/ids.js';
 import { timestampNow } from '../shared/dates.js';
@@ -83,10 +105,24 @@ export function canBeReversed(event) {
  * @param {object} originalEvent The event being reversed. Must be an
  *   ADD or REMOVE event that has not already been reversed (see
  *   canBeReversed).
+ * @param {number} appliedQuantity The ACTUAL quantity that took effect on
+ *   inventory when `originalEvent` was originally applied — i.e. the
+ *   `appliedQuantity` returned by applyStockEvent() at the moment this
+ *   event was committed (see applyStockEvent.js). This is REQUIRED and is
+ *   deliberately a separate parameter, not read from
+ *   `originalEvent.quantity`: for an ADD, the two are always equal, but
+ *   for a REMOVE that was clamped by the over-removal policy,
+ *   `appliedQuantity` can be less than `originalEvent.quantity` — and the
+ *   reversal must undo the former, not the latter, or "undo" would
+ *   fabricate inventory that was never real. Callers that are certain no
+ *   clamping occurred (e.g. reversing an ADD, or a REMOVE known to have
+ *   been fully satisfied) may simply pass `originalEvent.quantity`.
  * @returns {{ reversalEvent: object|null, originalPatch: object|null, errors: string[] }}
  *   reversalEvent — the new, opposite-type event, with `reversalOf` set to
- *     `originalEvent.id`. Has its own fresh id and `recordedAt` (the
- *     moment the reversal itself happens — NOT copied from the original).
+ *     `originalEvent.id` and `quantity` set to `appliedQuantity` (NOT
+ *     `originalEvent.quantity`). Has its own fresh id and `recordedAt`
+ *     (the moment the reversal itself happens — NOT copied from the
+ *     original).
  *   originalPatch — `{ reversedBy: reversalEvent.id }`, the ONLY field the
  *     original event's record should be updated with. This is the one
  *     narrow, documented exception to "events are immutable" carried over
@@ -94,11 +130,11 @@ export function canBeReversed(event) {
  *     everything else about the original stays exactly as recorded
  *     forever — quantity, cost, comment, purchaseDate, recordedAt are
  *     never touched. Only the backward-reference is added.
- *   errors — non-empty if the event cannot be reversed (wrong shape, or
- *     already reversed); reversalEvent/originalPatch are both null in
- *     that case.
+ *   errors — non-empty if the event cannot be reversed (wrong shape,
+ *     already reversed, or invalid appliedQuantity); reversalEvent/
+ *     originalPatch are both null in that case.
  */
-export function createReversalEvent(originalEvent) {
+export function createReversalEvent(originalEvent, appliedQuantity) {
   const errors = [];
 
   if (!originalEvent || typeof originalEvent !== 'object') {
@@ -128,6 +164,14 @@ export function createReversalEvent(originalEvent) {
     errors.push('This event has no id to link a reversal to.');
   }
 
+  if (
+    typeof appliedQuantity !== 'number' ||
+    !Number.isFinite(appliedQuantity) ||
+    appliedQuantity <= 0
+  ) {
+    errors.push('The actual applied quantity for this event is required to reverse it.');
+  }
+
   if (errors.length > 0) {
     return { reversalEvent: null, originalPatch: null, errors };
   }
@@ -136,7 +180,11 @@ export function createReversalEvent(originalEvent) {
     id: generateId(),
     productId: originalEvent.productId,
     type: OPPOSITE_TYPE[originalEvent.type],
-    quantity: originalEvent.quantity,
+    // The reversal undoes the TRUE applied effect, not the requested
+    // quantity — see "THE OVER-REMOVAL REVERSAL FIX" above. For an
+    // unclamped event these are the same number; for a clamped
+    // over-removal, appliedQuantity is the smaller, correct one.
+    quantity: appliedQuantity,
     // Cost/purchaseDate are only meaningful for ADD events in the first
     // place (stockEventFactory.js). A reversal of a REMOVE is itself an
     // ADD, but it is not a new purchase — it's compensating for a removal

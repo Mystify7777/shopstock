@@ -157,14 +157,36 @@ reconciliation/audit view could compare "units removed per history" against
 that's a reporting concern, not something `applyStockEvent.js` or the event
 itself needs to resolve.
 
-**Corollary for reversal (see `domain/stock/reversal.js`):** reversing a
-clamped over-removal does not restore the pre-removal quantity — it adds
-back exactly what the event says was removed. Example: quantity 5, remove
-8 → clamped to 0; reversing that removal adds 8 back → 8, not 5. This is
-the honest consequence of the event recording "8 were removed": the
-reversal is equally honest about undoing exactly that, not about
-magically knowing only 5 could have actually left the shelf. Documented
-here so it isn't mistaken for a bug later.
+**Reversal and `appliedQuantity` (see `domain/stock/applyStockEvent.js` and
+`domain/stock/reversal.js`).** An earlier version of this document argued
+that reversing a clamped over-removal should add back the event's full
+*requested* quantity (e.g. quantity 5, remove 8 → clamped to 0; reverse →
+add 8 back → 8). Review caught that this is wrong: it manufactures
+inventory that never existed. The requested quantity (8) and the quantity
+that actually left the shelf (5, since only 5 were available) are
+genuinely different numbers under clamping, and a reversal must undo the
+latter, not the former — otherwise pressing "Undo" immediately after a
+warned-and-confirmed over-removal would net +3 units out of nowhere.
+
+The fix: `applyStockEvent()` returns `{ nextQuantity, appliedQuantity }`
+instead of a bare number. `appliedQuantity` equals `event.quantity` for
+ADD (never clamped) and `min(event.quantity, currentQuantity)` for REMOVE
+(equal to the requested amount unless clamped). This value is only
+knowable at the exact moment an event is applied against a specific
+`currentQuantity` — it cannot be recovered from the event alone, since the
+event is immutable and only ever records what was *requested*. So whatever
+commits a stock event (a repository or service, in Phase 2/3) must retain
+`appliedQuantity` alongside the event's id at commit time, and supply it
+explicitly when that event is later reversed:
+`createReversalEvent(originalEvent, appliedQuantity)`. The reversal event's
+own `quantity` is set to `appliedQuantity`, not `originalEvent.quantity`.
+
+Worked example, corrected: quantity 5, REMOVE 8 → `nextQuantity` 0,
+`appliedQuantity` 5 (not 8). Reversing that REMOVE with
+`appliedQuantity: 5` produces an ADD of 5, restoring quantity to exactly
+5 — the true pre-removal state, not 8. The original `StockEvent` still
+honestly records `quantity: 8` (the full requested amount) forever;
+`appliedQuantity` is never written onto it.
 
 A `ProductChangeEvent` records **"a device attempted to set field X to
 value Y at time T."** It is a historical fact and never changes once

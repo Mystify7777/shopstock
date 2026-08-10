@@ -7,7 +7,12 @@
 // names this exact function as the reconciliation path (e.g. after a sync
 // pulls down events a device didn't have locally, or any time the
 // materialized `Product.quantity` is suspected to have drifted from what
-// the event stream actually implies).
+// the event stream actually implies). This function only cares about
+// applyStockEvent()'s `nextQuantity` result — it has no use for
+// `appliedQuantity` (that value only matters to reversal.js, which needs
+// to know the true effect of an over-removal at the moment it happens;
+// replaying history from scratch has no reversals-in-progress to feed it
+// to).
 //
 // TWO DECISIONS THIS FILE LOCKS IN, both load-bearing:
 //
@@ -47,21 +52,33 @@ import { applyStockEvent } from './applyStockEvent.js';
  * @param {object[]} events The product's stock events, in canonical order
  *   (whatever order the repository considers authoritative — typically
  *   chronological by recordedAt, but this function does not assume or
- *   enforce that; it simply reduces over the array as given).
+ *   enforce that; it simply reduces over the array as given). Must be a
+ *   real array — an empty array (`[]`) is a valid, meaningful "no history
+ *   yet" input and returns 0. `null`/`undefined`/anything non-array is
+ *   NOT treated the same as an empty array: this function is explicitly a
+ *   reconciliation mechanism, so a malformed top-level input should
+ *   surface loudly as a data-layer bug rather than being silently
+ *   swallowed into "0, no history" — the two situations mean very
+ *   different things and must not be conflated.
  * @returns {number} The recomputed quantity. Always finite and >= 0
  *   (applyStockEvent.js guarantees this at every step).
- * @throws {TypeError} Propagated directly from applyStockEvent() if any
- *   event in the list is malformed (unrecognized type, non-positive or
- *   non-finite quantity). A malformed event reaching this point indicates
- *   corrupted stored data, which should surface loudly during
- *   reconciliation rather than being silently skipped or defaulted.
+ * @throws {TypeError} If `events` is not an array at all, or (propagated
+ *   directly from applyStockEvent()) if any event in the list is
+ *   malformed (unrecognized type, non-positive or non-finite quantity).
  */
 export function recomputeQuantityFromEvents(events) {
-  const eventList = Array.isArray(events) ? events : [];
+  if (!Array.isArray(events)) {
+    throw new TypeError(
+      'recomputeQuantityFromEvents requires an array of stock events (an ' +
+        'empty array is fine; null/undefined is not — this function is a ' +
+        'reconciliation mechanism and must not silently treat missing ' +
+        'data the same as a genuinely empty history).'
+    );
+  }
 
   let quantity = 0;
-  for (const event of eventList) {
-    quantity = applyStockEvent(quantity, event);
+  for (const event of events) {
+    quantity = applyStockEvent(quantity, event).nextQuantity;
   }
   return quantity;
 }
