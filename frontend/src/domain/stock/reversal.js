@@ -117,6 +117,12 @@ export function canBeReversed(event) {
  *   fabricate inventory that was never real. Callers that are certain no
  *   clamping occurred (e.g. reversing an ADD, or a REMOVE known to have
  *   been fully satisfied) may simply pass `originalEvent.quantity`.
+ *   INVARIANT, ENFORCED HERE (not just trusted from the caller): must
+ *   satisfy `0 < appliedQuantity <= originalEvent.quantity`.
+ *   `applyStockEvent()` itself guarantees this on its own output, but this
+ *   is a public domain boundary and does not assume a caller upheld it —
+ *   a too-large `appliedQuantity` is rejected rather than silently
+ *   producing an oversized reversal.
  * @returns {{ reversalEvent: object|null, originalPatch: object|null, errors: string[] }}
  *   reversalEvent — the new, opposite-type event, with `reversalOf` set to
  *     `originalEvent.id` and `quantity` set to `appliedQuantity` (NOT
@@ -170,6 +176,20 @@ export function createReversalEvent(originalEvent, appliedQuantity) {
     appliedQuantity <= 0
   ) {
     errors.push('The actual applied quantity for this event is required to reverse it.');
+  } else if (
+    typeof originalEvent.quantity === 'number' &&
+    Number.isFinite(originalEvent.quantity) &&
+    appliedQuantity > originalEvent.quantity
+  ) {
+    // appliedQuantity can be LESS than the requested quantity (a clamped
+    // over-removal — see applyStockEvent.js) but can never be MORE than
+    // it: applyStockEvent() guarantees appliedQuantity <=
+    // event.quantity, and this domain boundary must not trust a caller
+    // to have upheld that on its own. Accepting a too-large
+    // appliedQuantity here would let a bad caller manufacture a reversal
+    // larger than the original event ever was — the exact class of bug
+    // this parameter exists to prevent, just moved one level up.
+    errors.push('The applied quantity cannot exceed the original event\'s requested quantity.');
   }
 
   if (errors.length > 0) {

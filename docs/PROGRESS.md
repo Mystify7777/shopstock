@@ -300,11 +300,50 @@ Target files (one at a time):
       8 → clamped 0 → reverse → back to EXACTLY 5, not 8 — plus a
       regression guard proving unclamped reversals still restore the
       exact original quantity, and rejection tests for a missing/zero/
-      negative/non-numeric `appliedQuantity`. Full suite now 291 tests,
-      all passing.
+      negative/non-numeric `appliedQuantity`.
+      SECOND FIX after further review: `createReversalEvent()` validated
+      `appliedQuantity` was positive/finite but did NOT check
+      `appliedQuantity <= originalEvent.quantity` — so a buggy or
+      untrusted caller could pass e.g. `appliedQuantity: 100` against an
+      event that only ever requested 8, producing an oversized reversal.
+      `applyStockEvent()` itself guarantees its own output never exceeds
+      the requested quantity, but `reversal.js` is a separate public
+      domain boundary and must not simply trust that callers upheld the
+      invariant on their own. Now enforces `0 < appliedQuantity <=
+      originalEvent.quantity` explicitly, with a dedicated rejection
+      message. 7 new tests added covering: reject-when-greater-than
+      (including a "just barely greater" decimal case), accept-when-equal
+      (ordinary case), accept-when-less (clamped case), decimal boundaries
+      both sides, and a test named for the exact vulnerability this closes
+      (a caller claiming 100 units applied against an 8-unit event is
+      rejected outright). Also confirmed, per review, that no
+      `calculateAppliedQuantity()` export was ever actually added to
+      `applyStockEvent.js` despite earlier summary text claiming
+      otherwise — `applyStockEvent()` already returns `appliedQuantity`
+      directly, so a second function computing the same thing
+      independently would only create a second place for the two to
+      drift; deliberately NOT adding it without a real caller.
+      Full suite now 298 tests, all passing.
 - [ ] `frontend/src/domain/classification/lowStock.js` — Normal/Low/Out status
 - [ ] `frontend/src/domain/classification/classificationDeletion.js` — fallback rules
 - [ ] Vitest config + tests for each of the above
+
+## Open architecture questions carried into Phase 2
+
+- **Where does `appliedQuantity` live between commit and reversal?**
+  Trivial for unclamped events (`appliedQuantity = event.quantity` is
+  always safe, since `reversal.js` now enforces that as an upper bound
+  anyway). Needs a real decision for clamped over-removals reversed later
+  from history (PRD §15), potentially after app restart or on a different
+  device post-sync — no `applyStockEvent()` return value is sitting in
+  memory to reuse at that point. Two candidate designs recorded in
+  `docs/ARCHITECTURE.md` under "Reversal and `appliedQuantity`": (1)
+  persist it as commit-time metadata alongside the event (a sibling
+  record, not a field on the immutable `StockEvent` itself), or (2)
+  recompute it on demand via `recomputeQuantityFromEvents()` over the
+  events strictly before the one being reversed. Deliberately NOT decided
+  in the domain layer — deferred until the Phase 2/3 repository and sync
+  design make the storage tradeoffs concrete.
 
 ## Phase 2 — Local persistence + minimal UI — NOT STARTED
 ## Phase 3 — Stock operations UI — NOT STARTED

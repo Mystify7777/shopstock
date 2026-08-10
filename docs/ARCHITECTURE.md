@@ -188,6 +188,45 @@ Worked example, corrected: quantity 5, REMOVE 8 → `nextQuantity` 0,
 honestly records `quantity: 8` (the full requested amount) forever;
 `appliedQuantity` is never written onto it.
 
+`createReversalEvent()` enforces `0 < appliedQuantity <= originalEvent.quantity`
+itself — it does not trust a caller to have upheld that invariant.
+`applyStockEvent()` guarantees it on its own output, but `reversal.js` is a
+separate public domain boundary; a caller passing an inflated
+`appliedQuantity` (whether from a bug or from untrusted data) is rejected
+outright rather than silently producing an oversized reversal.
+
+**OPEN ARCHITECTURE QUESTION, not yet resolved — where does `appliedQuantity`
+live between commit and reversal?** At commit time, `applyStockEvent()`'s
+return value is available to whatever called it and `appliedQuantity` can
+be captured immediately. But `reversal.js` also has to work for the PRD §15
+case — reversing an event from history, potentially much later, possibly
+after the app has been closed and reopened, possibly on a different device
+entirely after sync. In that case there is no `applyStockEvent()` return
+value sitting in memory to reuse; `appliedQuantity` has to be recovered
+from *somewhere persisted*.
+
+For an unclamped event this is trivial (`appliedQuantity = event.quantity`
+is definitely safe, since the enforced invariant means it's never larger).
+The only case that needs real storage is a clamped over-removal. Two
+candidate designs, deliberately NOT decided here:
+
+1. Persist `appliedQuantity` as commit-time metadata alongside the event
+   (a sibling record/column, not a field on the immutable `StockEvent`
+   itself — e.g. something like a `StockEventCommit` table keyed by event
+   id), written once at commit time, read at reversal time.
+2. Recompute it on demand at reversal time by replaying
+   `recomputeQuantityFromEvents()` over the events strictly before the one
+   being reversed, to reconstruct what `currentQuantity` was at that
+   moment, then deriving `min(event.quantity, thatQuantity)`.
+
+Option 1 is cheaper to read but adds a new persisted concept. Option 2
+needs no new storage but is more expensive and depends on having the full,
+correctly-ordered event history available locally at reversal time (true
+today, but worth re-checking once sync can deliver partial histories).
+This decision is deferred to Phase 2/3, when the repository and sync
+design make the storage tradeoffs concrete — it should not be guessed at
+here in the domain layer. Tracked in `docs/PROGRESS.md` as open work.
+
 A `ProductChangeEvent` records **"a device attempted to set field X to
 value Y at time T."** It is a historical fact and never changes once
 written — including the losing side of a conflict.

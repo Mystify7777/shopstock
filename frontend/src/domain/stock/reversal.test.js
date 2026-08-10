@@ -197,6 +197,60 @@ describe('createReversalEvent — required appliedQuantity parameter', () => {
   });
 });
 
+describe('createReversalEvent — appliedQuantity upper-bound invariant (0 < appliedQuantity <= originalEvent.quantity)', () => {
+  it('rejects an appliedQuantity greater than the original requested quantity', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 8 }).event;
+    const { reversalEvent, errors } = createReversalEvent(original, 100);
+    expect(reversalEvent).toBeNull();
+    expect(errors).toContain(
+      "The applied quantity cannot exceed the original event's requested quantity."
+    );
+  });
+
+  it('rejects an appliedQuantity just barely greater than the requested quantity', () => {
+    const original = createAddStockEvent({ productId: 'p1', quantity: 8 }).event;
+    const { reversalEvent, errors } = createReversalEvent(original, 8.0001);
+    expect(reversalEvent).toBeNull();
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('accepts an appliedQuantity exactly equal to the requested quantity (the ordinary, unclamped case)', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 8 }).event;
+    const { reversalEvent, errors } = createReversalEvent(original, 8);
+    expect(errors).toEqual([]);
+    expect(reversalEvent.quantity).toBe(8);
+  });
+
+  it('accepts an appliedQuantity less than the requested quantity (the clamped over-removal case)', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 8 }).event;
+    const { reversalEvent, errors } = createReversalEvent(original, 5);
+    expect(errors).toEqual([]);
+    expect(reversalEvent.quantity).toBe(5);
+  });
+
+  it('accepts a valid decimal appliedQuantity at or below a decimal requested quantity', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 2.5 }).event;
+    expect(createReversalEvent(original, 2.5).errors).toEqual([]);
+    expect(createReversalEvent(original, 1.25).errors).toEqual([]);
+  });
+
+  it('rejects a decimal appliedQuantity above a decimal requested quantity', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 2.5 }).event;
+    const { errors } = createReversalEvent(original, 2.6);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('would have caught the vulnerability this check closes: a caller supplying an inflated appliedQuantity cannot manufacture an oversized reversal', () => {
+    const original = createRemoveStockEvent({ productId: 'p1', quantity: 8 }).event;
+    // A buggy or malicious caller claiming "100 units were applied" when
+    // the event only ever requested 8 must be rejected outright, not
+    // silently produce a 100-unit reversal.
+    const { reversalEvent, errors } = createReversalEvent(original, 100);
+    expect(reversalEvent).toBeNull();
+    expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
 describe('createReversalEvent — cannot reverse an already-reversed event', () => {
   it('rejects reversing an event whose reversedBy is already set', () => {
     const original = createAddStockEvent({ productId: 'p1', quantity: 5 }).event;
