@@ -38,7 +38,7 @@ code was written:
       decision that only `SyncQueueEntry` tracks sync state; a comment now
       marks its intentional absence so it isn't accidentally re-added).
 
-## Phase 1 — Domain Model (pure logic, no UI) — IN PROGRESS
+## Phase 1 — Domain Model (pure logic, no UI) — ✅ COMPLETE
 
 Target files (one at a time):
 
@@ -324,9 +324,116 @@ Target files (one at a time):
       independently would only create a second place for the two to
       drift; deliberately NOT adding it without a real caller.
       Full suite now 298 tests, all passing.
-- [ ] `frontend/src/domain/classification/lowStock.js` — Normal/Low/Out status
-- [ ] `frontend/src/domain/classification/classificationDeletion.js` — fallback rules
+- [x] `frontend/src/domain/classification/lowStock.js` — `classifyStockStatus()`
+      returns `'Normal' | 'Low Stock' | 'Out of Stock'` (PRD §22). Two
+      rules worth flagging: (1) the threshold BOUNDARY is inclusive —
+      `quantity === effectiveThreshold` is LOW, not NORMAL (a shop owner
+      with a threshold of 10 wants the warning to trigger AT 10, not only
+      strictly below it); (2) `lowStockDisabled` suppresses LOW but NEVER
+      suppresses OUT — quantity `<= 0` is always OUT regardless of the
+      disabled flag, since "I muted the low-stock nudge for this
+      slow-moving item" is a different, less absolute statement than
+      "there is genuinely nothing left." `resolveLowStockThreshold()`
+      mirrors `marginCalculations.js`'s override-wins-else-global-default
+      pattern but is kept as its own independently-named function rather
+      than sharing code with `resolveMargin()`, since margin and
+      stock-level configuration aren't actually related concepts despite
+      the resolution shape being identical. `needsAttention()` is a small
+      convenience boolean for dashboard counting (PRD §28/§29) so callers
+      don't need to compare status strings directly.
+      Tested: 29 test cases, 29 passing
+      (`tests/domain/classification/lowStock.test.js`) — covers the PRD
+      §22 worked example (default 5, override 10) in both directions
+      (override raising AND lowering effective sensitivity vs. the
+      global default), the OUT-overrides-disabled rule explicitly, the
+      inclusive-boundary case (quantity exactly at threshold is LOW),
+      decimal quantities/thresholds, and negative/non-finite/non-numeric
+      quantity rejection. Full suite now 327 tests, all passing.
+- [x] `frontend/src/domain/classification/classificationDeletion.js` —
+      three DISTINCT fallback functions rather than one generic
+      type-switched helper, matching the genuinely different semantics per
+      PRD §7/§8/§10: `applyCategoryDeletionFallback` (single reference →
+      `null`, displayed as "Uncategorized" by the UI layer — this file
+      never writes that label string itself), `applyLocationDeletionFallback`
+      and `applyTagDeletionFallback` (array references → the specific id
+      filtered out, every other reference untouched, no fallback value
+      substituted for tags). `findProductsUsing{Category,Location,Tag}()`
+      return PRODUCTS, not reference occurrences — a product with a
+      duplicated reference in its own array is still counted once.
+      `previewClassificationDeletion()` is the single function a
+      service/UI layer needs to build the PRD §10/§11 confirmation screen:
+      returns `affectedCount`, the original `affectedProducts` (for
+      display), and `updatedProducts` (what they'd look like after the
+      fallback) — WITHOUT deleting, archiving, or persisting anything.
+      This module has no delete-product concept at all (confirmed by a
+      test that imports the module and asserts no export name matches
+      delete/removeProduct), matching Build Brief §11's requirement that
+      the system never cascade-deletes products without explicit,
+      separate confirmation — that confirmation and any resulting
+      deletion belongs entirely to the service/UI layer, not here.
+      Tested: 34 test cases, 34 passing
+      (`tests/domain/classification/classificationDeletion.test.js`) —
+      covers all 12 cases from the pre-implementation review: each
+      fallback type individually, multi-reference preservation, no-op on
+      unaffected products, multi-product counting, zero-affected as a
+      valid result, non-mutation of both original products and their
+      arrays (including an object-identity check that an untouched
+      array is literally the same reference, not just equal), rejection
+      of an unknown classification type and of a missing/empty id (thrown,
+      never silently guessed), confirmation that no product is physically
+      removed, affectedCount always matching affectedProducts.length, and
+      the duplicate-reference-doesn't-inflate-the-count case in both
+      directions (counting once, and fully clearing all duplicate
+      occurrences on removal rather than leaving one behind).
+      Full suite now 361 tests, all passing.
 - [ ] Vitest config + tests for each of the above
+
+## Phase 1 completion gate
+
+All ten domain files are implemented and individually tested (361 tests
+across 12 files). Before Phase 2 begins, this section tracks the
+cross-cutting verification pass — confirming the suite runs cleanly as a
+whole, not just file-by-file — plus a short completion review, per the
+decision to treat "Phase 1 done" as a gate rather than a checklist of
+individually-green files.
+
+- [x] Formal `vitest.config.js` — checked: test config currently lives as
+      a `test` block inside `vite.config.js`, not a separate file. Kept as
+      is rather than splitting it out — it has correctly driven all 361
+      tests across 12 files throughout Phase 1 with no issues, and adding
+      a separate config file with no functional difference would be
+      exactly the kind of unnecessary abstraction Build Brief Rule 2 warns
+      against. Revisit only if a real need arises (e.g. divergent
+      frontend-build vs. test-run config needs).
+- [x] Full suite run from a clean `npm install` — done with a genuinely
+      clean environment (`node_modules` AND `package-lock.json` both
+      removed, not just `node_modules`). Result: 361/361 passing, 12/12
+      files, 3.93s. No skipped or pending tests. Vitest runs test files in
+      parallel by default, so this run also incidentally confirms no
+      test-order dependency exists between files.
+- [x] Phase 1 completion review — re-read `docs/ARCHITECTURE.md` end to
+      end against the implemented files. Verified each key documented
+      decision is both present and substantively explained (not just
+      mentioned once): materialized `Product.quantity` (1 dedicated
+      section), `syncStatus` removed from events (7 references, every one
+      correctly explaining the field's *absence*, none reintroducing it —
+      checked individually), `ProductChangeEvent.accepted` conflict
+      semantics (8 references), `PhotoStorage` provider abstraction (6
+      references), mandatory Dexie migrations from `version(1)` (4
+      references), and the `appliedQuantity` reversal split (16
+      references, reflecting how much that decision evolved through
+      review). No contradictions found between what the doc describes and
+      what the code actually does.
+
+**Phase 1 status: complete.** 10 domain files, 361 tests, 0 skipped, all
+passing from a clean install. One deliberately-open item carries forward
+into Phase 2 rather than being resolved prematurely: where `appliedQuantity`
+is persisted between an event's commit and a later reversal (see below and
+`docs/ARCHITECTURE.md`, "OPEN ARCHITECTURE QUESTION"). Everything else —
+the materialized-quantity model, the event/sync-state separation, the
+metadata conflict semantics, the photo storage abstraction, the migration
+mandate, and the reversal correctness fixes — is implemented, tested, and
+documented consistently between code and architecture doc.
 
 ## Open architecture questions carried into Phase 2
 
