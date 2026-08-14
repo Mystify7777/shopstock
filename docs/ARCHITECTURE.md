@@ -195,10 +195,10 @@ separate public domain boundary; a caller passing an inflated
 `appliedQuantity` (whether from a bug or from untrusted data) is rejected
 outright rather than silently producing an oversized reversal.
 
-**OPEN ARCHITECTURE QUESTION, not yet resolved — where does `appliedQuantity`
-live between commit and reversal?** At commit time, `applyStockEvent()`'s
-return value is available to whatever called it and `appliedQuantity` can
-be captured immediately. But `reversal.js` also has to work for the PRD §15
+**RESOLVED (Phase 2, `data/db/schema.js`) — where `appliedQuantity` lives
+between commit and reversal.** At commit time, `applyStockEvent()`'s return
+value is available to whatever called it and `appliedQuantity` can be
+captured immediately. But `reversal.js` also has to work for the PRD §15
 case — reversing an event from history, potentially much later, possibly
 after the app has been closed and reopened, possibly on a different device
 entirely after sync. In that case there is no `applyStockEvent()` return
@@ -208,24 +208,78 @@ from *somewhere persisted*.
 For an unclamped event this is trivial (`appliedQuantity = event.quantity`
 is definitely safe, since the enforced invariant means it's never larger).
 The only case that needs real storage is a clamped over-removal. Two
-candidate designs, deliberately NOT decided here:
+candidate designs were considered:
 
-1. Persist `appliedQuantity` as commit-time metadata alongside the event
-   (a sibling record/column, not a field on the immutable `StockEvent`
-   itself — e.g. something like a `StockEventCommit` table keyed by event
-   id), written once at commit time, read at reversal time.
+1. Persist `appliedQuantity` as commit-time metadata alongside the event.
 2. Recompute it on demand at reversal time by replaying
    `recomputeQuantityFromEvents()` over the events strictly before the one
    being reversed, to reconstruct what `currentQuantity` was at that
    moment, then deriving `min(event.quantity, thatQuantity)`.
 
-Option 1 is cheaper to read but adds a new persisted concept. Option 2
-needs no new storage but is more expensive and depends on having the full,
-correctly-ordered event history available locally at reversal time (true
-today, but worth re-checking once sync can deliver partial histories).
-This decision is deferred to Phase 2/3, when the repository and sync
-design make the storage tradeoffs concrete — it should not be guessed at
-here in the domain layer. Tracked in `docs/PROGRESS.md` as open work.
+**Decision: option 1.** Implemented as an `appliedQuantity` column on the
+Dexie `stockEvents` table itself — NOT as a field on the domain
+`StockEvent` shape (`stockEventFactory.js` never produces this field; a
+domain `StockEvent` object is exactly the shape that file defines, full
+stop). The repository layer writes `appliedQuantity` alongside the rest of
+the event fields when it persists a commit, having captured it from
+`applyStockEvent()`'s return value at that moment. Reading it back later
+(for a PRD §15 historical reversal) is then a single indexed row read, not
+a full-history replay.
+
+Why option 1 over option 2: option 2's correctness depends on having the
+complete, correctly-ordered event history for that product available
+locally at reversal time — true today, but not guaranteed once sync can
+deliver partial histories to a device, and replaying is strictly more
+expensive for no benefit once we're persisting locally anyway. Option 1 is
+deterministic, cheap to read, and doesn't introduce that dependency.
+
+`appliedQuantity` remains a repository/storage-layer concept, not a domain
+one — the boundary that made this decision safe to defer past Phase 1 is
+exactly the boundary that's preserved now: domain code (stockEventFactory.js,
+applyStockEvent.js, reversal.js) still only ever deals with the domain
+`StockEvent` shape and explicit `appliedQuantity` parameters; only the
+repository (Phase 2, upcoming) is responsible for reading/writing the
+extra persisted column.
+
+**AMENDMENT (caught in review before repository implementation began) —
+`appliedQuantity` must travel across every persistence boundary that can
+serve a later reversal, not just the local one.** The resolution above
+justified persisting `appliedQuantity` partly by the PRD §15 scenario of
+reversing an event "possibly on a different device entirely after sync" —
+but only specified the local Dexie column, leaving the sync payload and
+MongoDB schema silently unspecified. That's a real gap: if
+`appliedQuantity` isn't included in what gets synced, a device that
+receives a stock event via sync (rather than having created it locally)
+has no way to correctly reverse a clamped over-removal it didn't witness —
+reopening the exact inventory-inflation bug this value exists to prevent,
+just moved from "single device, no persistence" to "multi-device, no
+sync." Concretely:
+
+```
+Device A: REMOVE 8, only 5 available
+  applyStockEvent()  -> nextQuantity 0, appliedQuantity 5
+  Dexie stockEvents row: { quantity: 8, appliedQuantity: 5, ... }
+  syncQueue payload for this row: MUST include appliedQuantity: 5
+       |
+       v (sync)
+  MongoDB stockEvents document: MUST include appliedQuantity: 5
+       |
+       v (sync)
+Device B: receives the event, including appliedQuantity: 5
+  Device B's Dexie stockEvents row: { quantity: 8, appliedQuantity: 5, ... }
+  Device B can now correctly reverse this event -> restores to 5, not 8
+```
+
+So the corrected, general statement of the decision is: **`appliedQuantity`
+is commit-time persistence metadata, stored alongside a stock event at
+EVERY persistence boundary that must support later reversal** — local
+Dexie row, sync queue payload, and remote MongoDB document, all three,
+not just the first. It remains absent from exactly one place: the domain
+`StockEvent` shape itself (`stockEventFactory.js`'s output). This is
+reflected in the MongoDB schema and sync model sections below, and must be
+covered by an explicit repository test once `stockEventRepository.js` and
+the sync queue exist — a test asserting the queued payload for a stock
+event includes `appliedQuantity`, not just that the local Dexie write did.
 
 A `ProductChangeEvent` records **"a device attempted to set field X to
 value Y at time T."** It is a historical fact and never changes once
@@ -265,7 +319,7 @@ feature, not an extension of this calculation.
 ```js
 db.version(1).stores({
   products:             'id, name, categoryId, archived, updatedAt',
-  stockEvents:          'id, productId, recordedAt',
+  stockEvents:          'id, productId, recordedAt, reversalOf',
   productChangeEvents:  'id, productId, timestamp',
   categories:            'id, archived',
   locations:              'id, archived',
@@ -276,6 +330,12 @@ db.version(1).stores({
   session:                     'key'                // single-row trusted-device token
 });
 ```
+
+`stockEvents` rows also carry an `appliedQuantity` column, unindexed
+(never queried by value, only read alongside the rest of the row) — see
+"RESOLVED... where `appliedQuantity` lives between commit and reversal"
+below for why. `reversalOf` is indexed to make "find the reversal event
+for event X" a fast lookup rather than a full table scan.
 
 Note `stockEvents`/`productChangeEvents` no longer index `syncStatus` —
 that field doesn't exist on them (see "Events vs. sync state" above). Sync
@@ -307,7 +367,44 @@ the very first Dexie store definition:
 - Before Phase 2 ships the first real `db.version(1)`, we write a short test
   that opens the DB, seeds representative rows, and confirms the schema
   matches expectations — this becomes the harness later versions' upgrade
-  functions are tested against.
+  functions are tested against. DONE: see
+  `frontend/tests/data/db/schema.test.js`.
+
+## Stock-event commit atomicity (repository contract, binding before `stockEventRepository.js` is written)
+
+Committing a stock event is not one write — it is three, and they must
+succeed or fail together:
+
+```
+transaction
+├── stockEvents.put({ ...domainEvent, appliedQuantity })
+├── products.put({ ...product, quantity: nextQuantity })
+└── syncQueue.add({ entityType: 'stockEvent', payload: { ...domainEvent, appliedQuantity }, ... })
+```
+
+If these are three independent writes rather than one Dexie transaction,
+a failure partway through produces exactly the kind of silent corruption
+Phase 1 was built to prevent one layer up — e.g. the event is saved but
+the product's materialized quantity is never updated, so the UI shows
+stale stock; or the event and quantity are both saved but the sync queue
+entry is lost, so the event never leaves the device and a reversal
+performed on another device later has no idea this removal ever happened.
+
+`stockEventRepository.js`'s commit function MUST wrap all three writes in
+a single Dexie transaction (`db.transaction('rw', db.stockEvents,
+db.products, db.syncQueue, async () => { ... })`), and repository tests
+must include a case that simulates a failure partway through (e.g. the
+product write rejecting) and asserts that NONE of the three writes were
+left in place — not just that the whole operation returned an error.
+
+The same requirement applies to reversal commits (event write + product
+quantity update + original event's `reversedBy` patch + sync queue entry
+for the reversal, and — since sync must carry `appliedQuantity` per the
+amendment above — the reversal's own sync payload needs no
+`appliedQuantity` of its own if it is itself unclamped, but any reversal
+of a REMOVE built from a prior clamped `appliedQuantity` still carries the
+same requirement forward if it is later reversed again, per reversal.js's
+"reversals are themselves reversible" design).
 
 ## MongoDB schema
 
@@ -322,7 +419,17 @@ the stable identity used for idempotent upserts/inserts.
   recompute it from the event collection if drift is ever suspected.
 - `stockEvents` — insert-only. Server rejects/ignores duplicate `clientId`.
   No `syncStatus`-equivalent field server-side either; a document existing
-  in this collection simply means it has synced.
+  in this collection simply means it has synced. Also stores
+  `appliedQuantity` alongside the domain event fields (see "AMENDMENT...
+  `appliedQuantity` must travel across every persistence boundary," above)
+  — this is NOT optional or best-effort: without it, a device that
+  receives this event via sync (rather than having created it locally)
+  has no way to correctly reverse it later if it was a clamped
+  over-removal, which reopens the exact inventory-inflation bug that
+  `appliedQuantity` exists to prevent. Mongo's copy of a `stockEvents`
+  document is therefore not a pure mirror of the domain `StockEvent`
+  shape — it's the domain fields plus this one piece of commit-time
+  persistence metadata, exactly matching what the local Dexie row stores.
 - `productChangeEvents` — insert-only, same dedup strategy. Carries
   `accepted` (see "Metadata conflict semantics") which *can* be updated
   after the fact if a later-arriving-but-earlier-timestamped write changes
@@ -357,7 +464,16 @@ Two mutation shapes, matching PRD §31/§32:
 1. **Additive** (`StockEvent`, `ProductChangeEvent`): queued with
    `operation: 'insert'`. Deduplicated server-side by `clientId` so
    re-delivery is a no-op — this is what makes the queue safe to retry
-   after a dropped response.
+   after a dropped response. For a `stockEvent` entry specifically, the
+   queued `payload` is the domain event fields PLUS `appliedQuantity` —
+   never the domain event alone. This is a hard requirement, not an
+   optimization: a `stockEvent` synced without its `appliedQuantity`
+   leaves any device that later receives it via sync unable to correctly
+   reverse a clamped over-removal, silently reintroducing the
+   inventory-inflation bug `appliedQuantity` exists to prevent (see the
+   "AMENDMENT" in the `Product.quantity` section above). The repository
+   that builds this queue entry is responsible for including it every
+   time, and repository tests must assert this explicitly.
 2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued with
    `operation: 'upsert'`, carrying `updatedAt`. Server applies last-write-wins
    by comparing `updatedAt` timestamps. A write that loses the comparison is

@@ -429,30 +429,122 @@ individually-green files.
 passing from a clean install. One deliberately-open item carries forward
 into Phase 2 rather than being resolved prematurely: where `appliedQuantity`
 is persisted between an event's commit and a later reversal (see below and
-`docs/ARCHITECTURE.md`, "OPEN ARCHITECTURE QUESTION"). Everything else —
+`docs/ARCHITECTURE.md`, "AMENDMENT... `appliedQuantity` must travel across
+every persistence boundary"). Everything else —
 the materialized-quantity model, the event/sync-state separation, the
 metadata conflict semantics, the photo storage abstraction, the migration
 mandate, and the reversal correctness fixes — is implemented, tested, and
 documented consistently between code and architecture doc.
 
-## Open architecture questions carried into Phase 2
+## Resolved architecture questions (formerly open, now closed in Phase 2)
 
 - **Where does `appliedQuantity` live between commit and reversal?**
-  Trivial for unclamped events (`appliedQuantity = event.quantity` is
-  always safe, since `reversal.js` now enforces that as an upper bound
-  anyway). Needs a real decision for clamped over-removals reversed later
-  from history (PRD §15), potentially after app restart or on a different
-  device post-sync — no `applyStockEvent()` return value is sitting in
-  memory to reuse at that point. Two candidate designs recorded in
-  `docs/ARCHITECTURE.md` under "Reversal and `appliedQuantity`": (1)
-  persist it as commit-time metadata alongside the event (a sibling
-  record, not a field on the immutable `StockEvent` itself), or (2)
-  recompute it on demand via `recomputeQuantityFromEvents()` over the
-  events strictly before the one being reversed. Deliberately NOT decided
-  in the domain layer — deferred until the Phase 2/3 repository and sync
-  design make the storage tradeoffs concrete.
+  RESOLVED, then AMENDED after further review before repository work
+  began. Original decision: persist it as a commit-time column on the
+  Dexie `stockEvents` table (`data/db/schema.js`), separate from the
+  domain `StockEvent` shape. Review caught that this only specified the
+  LOCAL persistence boundary — the sync payload and MongoDB schema were
+  left unspecified, which reopens the exact inventory-inflation bug
+  `appliedQuantity` exists to prevent, just relocated to "device B
+  receives this event via sync and can't correctly reverse it." Corrected
+  statement: `appliedQuantity` is commit-time persistence metadata that
+  must travel across EVERY persistence boundary that can serve a later
+  reversal — local Dexie row, sync queue payload, AND remote MongoDB
+  document, all three. It remains absent from exactly one place: the
+  domain `StockEvent` shape itself. Full reasoning in
+  `docs/ARCHITECTURE.md` under "AMENDMENT (caught in review before
+  repository implementation began)." Local round-trip verified in
+  `tests/data/db/schema.test.js`; the sync-payload and MongoDB inclusion
+  still need their own repository/sync tests once those layers exist (see
+  2.2/2.3 below — now written as binding requirements, not suggestions).
 
-## Phase 2 — Local persistence + minimal UI — NOT STARTED
+## Phase 2 — Local persistence + minimal UI — IN PROGRESS
+
+Sequencing per pre-Phase-2 discussion: persistence must be proven
+trustworthy before any UI consumes it. Order: (1) Dexie schema + migration
+harness, (2) repository contracts, (3) repository tests, (4) only then the
+first minimal product screen.
+
+### 2.1 — Dexie schema + migration harness ✅
+
+- [x] `frontend/src/data/db/schema.js` — `db.version(1)` matching
+      `docs/ARCHITECTURE.md`'s documented schema, plus the two additions
+      that only became concrete once real repository queries were being
+      designed: `reversalOf` indexed on `stockEvents` (fast "find this
+      event's reversal" lookup) and the resolved `appliedQuantity` column
+      (unindexed — read alongside the row, never queried by value).
+      `createDatabase()` returns a fresh, unopened Dexie instance; callers
+      (repositories, tests) control when `.open()` happens.
+- [x] `frontend/tests/setup/fake-indexeddb.js` + `vite.config.js`
+      `setupFiles` entry — installs `fake-indexeddb/auto` globally so
+      Dexie-backed tests can run under Node/Vitest. Pure domain tests are
+      unaffected (they never touch IndexedDB).
+- [x] `frontend/tests/data/db/schema.test.js` — the harness test
+      `docs/ARCHITECTURE.md` requires before shipping the first real
+      `version(1)`: confirms the DB opens, confirms `db.verno === 1`,
+      confirms the exact table list matches what's documented, and does a
+      representative seed-and-read round trip through EVERY table
+      (products including an indexed-column query, stockEvents including
+      both the `appliedQuantity` round-trip and an indexed `reversalOf`
+      query, productChangeEvents, categories/locations/tags/units,
+      photos as a blob-shaped record, syncQueue confirming auto-increment
+      `localId` ordering and a `status` query, session as a single-row
+      key/value store) plus a clean-isolation check that a fresh database
+      has no leftover data between test runs.
+      Tested: 14 test cases, 14 passing (`tests/data/db/schema.test.js`).
+      Full suite now 375 tests (361 domain + 14 data layer), all passing,
+      confirmed with zero regressions to the existing domain suite after
+      adding the global `fake-indexeddb` setup file.
+
+### 2.2 — Repository contracts — NOT STARTED
+
+Two requirements are now BINDING (not suggestions) on this milestone,
+per the architecture amendment above and the atomicity section added to
+`docs/ARCHITECTURE.md` ("Stock-event commit atomicity"):
+
+1. Every `syncQueue` payload built for a `stockEvent` entity MUST include
+   `appliedQuantity` alongside the domain event fields — never the domain
+   event alone. This is what carries the value across the sync boundary
+   to other devices; without it, `appliedQuantity`'s entire purpose (safe
+   historical reversal per PRD §15, from any device) is defeated.
+2. A stock-event commit (event write + product quantity update + sync
+   queue entry) MUST be a single atomic Dexie transaction, not three
+   independent writes. A partial failure must leave NONE of the three in
+   place — this needs an explicit repository test that simulates a
+   mid-transaction failure and asserts full rollback, not just that the
+   overall call returned an error.
+
+- [ ] `frontend/src/data/repositories/productRepository.js`
+- [ ] `frontend/src/data/repositories/classificationRepository.js`
+      (categories/locations/tags/units — grouped since they share the
+      same shape and the same deletion-fallback orchestration pattern,
+      per `classificationDeletion.js`)
+- [ ] `frontend/src/data/repositories/stockEventRepository.js` — this is
+      where the resolved `appliedQuantity` column actually gets written
+      (and, per requirement 1 above, also included in the sync queue
+      payload). Commit path calls `applyStockEvent()`, persists the event
+      + `appliedQuantity` + updated product quantity + sync queue entry
+      as ONE Dexie transaction (requirement 2 above). Reversal path reads
+      the stored `appliedQuantity` back for `reversal.js`'s required
+      parameter.
+
+### 2.3 — Repository tests — NOT STARTED
+
+CRUD round-trips, migration behavior (once version(2) exists), table
+isolation. For the stock-event commit path specifically, tests MUST cover
+both binding requirements from 2.2 above:
+  - a test asserting the queued sync payload for a stock event contains
+    `appliedQuantity`, not just that the local Dexie write does;
+  - a test simulating a mid-transaction failure (e.g. the product write
+    rejecting) and asserting the event write and sync queue entry were
+    BOTH rolled back — not merely that the operation returned an error.
+
+### 2.4 — First minimal product screen — NOT STARTED
+
+Product list, create product, edit product — repository-backed, with
+domain validation (`productValidation.js`/`productFactory.js`) remaining
+the source of truth for what's a valid write.
+
 ## Phase 3 — Stock operations UI — NOT STARTED
 ## Phase 4 — Search — NOT STARTED
 ## Phase 5 — Backend (Express + MongoDB + auth) — NOT STARTED

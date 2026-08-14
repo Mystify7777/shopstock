@@ -43,7 +43,13 @@ export default defineConfig({
   ],
   test: {
     environment: 'node',
-    include: ['tests/**/*.test.js']
+    include: ['tests/**/*.test.js'],
+    // fake-indexeddb/auto installs `indexedDB` and `IDBKeyRange` as
+    // globals before any test file runs, which is what lets Dexie-backed
+    // tests (tests/data/**) work under Node without a real browser. Pure
+    // domain tests (tests/domain/**) don't touch IndexedDB at all and are
+    // unaffected by this being present.
+    setupFiles: ['./tests/setup/fake-indexeddb.js']
   },
   server: {
     port: 5173
