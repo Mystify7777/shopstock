@@ -69,7 +69,17 @@ ProductChangeEvent
   id                      string
   productId                string
   field                    string  ('name' | 'category' | 'location' |
-                                     'tags' | 'sellingPrice' | ...)
+                                     'tags' | 'sellingPrice' | 'archived')
+                             # This is the CLOSED set of ProductChangeEvent-
+                             # tracked fields, per PRD §16 / Build Brief §21
+                             # ("Name, Category, Location, Tags, Selling
+                             # price"), plus 'archived' (explicit decision —
+                             # archived is a Product field and a metadata
+                             # transition like any other, so it is tracked
+                             # the same way even though it is not itself
+                             # named in PRD §16/§21's list). See "Tracked
+                             # vs. non-tracked Product fields" below for the
+                             # distinction this enables.
   oldValue                 any
   newValue                 any
   timestamp                 string (ISO datetime)
@@ -289,14 +299,65 @@ written — including the losing side of a conflict.
 *result* of applying LWW across whatever `ProductChangeEvent`s exist for
 that field, not a separate opinion that happens to usually agree with them.
 
-So: every metadata write always produces a `ProductChangeEvent`. The
-`accepted` flag on that event says whether it was the one that ended up
-determining `Product[field]` at write time. If a later sync reveals an
-earlier-clock-but-later-arriving write should have won, the sync layer
-updates `Product[field]` and may flip `accepted` flags accordingly — but it
-does not delete or edit the losing event's `oldValue`/`newValue`. See PRD
-§32: "the earlier change should remain represented in product-change
-history."
+So: every write to a *tracked* field always produces a `ProductChangeEvent`
+(see "Tracked vs. non-tracked Product fields" immediately below — this is
+narrower than "every metadata write," which was ambiguous in earlier
+drafts of this document). The `accepted` flag on that event says whether
+it was the one that ended up determining `Product[field]` at write time.
+If a later sync reveals an earlier-clock-but-later-arriving write should
+have won, the sync layer updates `Product[field]` and may flip `accepted`
+flags accordingly — but it does not delete or edit the losing event's
+`oldValue`/`newValue`. See PRD §32: "the earlier change should remain
+represented in product-change history."
+
+### Tracked vs. non-tracked Product fields
+
+Two distinct concepts, previously conflated under the single phrase
+"metadata write":
+
+- **Product metadata mutation** — any write to any `Product` field via the
+  domain's `updateProduct()`. This includes every field on `Product`:
+  `name`, `notes`, `marginOverride`, `latestPurchaseDate`, `archived`,
+  everything.
+- **ProductChangeEvent-tracked field mutation** — a mutation that touches
+  one of the fields in the closed `field` union above: `name`, `category`,
+  `location`, `tags`, `sellingPrice`, `archived`. Only these produce
+  `ProductChangeEvent` records.
+
+A Product metadata mutation that touches only non-tracked fields (e.g. a
+`notes`-only edit, or a `marginOverride`-only edit) is legitimate and
+**produces zero `ProductChangeEvent` records** — this is not a gap or an
+omission, it is the correct behavior for fields PRD §16 / Build Brief §21
+do not name as requiring change-history tracking. A repository or service
+that received an empty `changeEvents` array for such an edit is behaving
+correctly, not skipping a required step.
+
+### Product creation and ProductChangeEvent (V1 scope decision)
+
+Initial Product creation does not generate `ProductChangeEvent` records.
+This is an explicit V1 scope decision based on the absence of any
+documented creation-event requirement in the PRD or Build Brief — it is
+not a derived architectural invariant, and a future version could revisit
+it if a "product was created" audit entry becomes a requirement. A
+`ProductChangeEvent`'s `oldValue`/`newValue` shape describes a *transition
+from* a prior accepted value; a newly created product has no prior
+accepted value to transition from, which is the underlying reason this
+reads naturally as out of scope rather than an oversight.
+
+### Atomicity of Product state mutations and their ProductChangeEvents
+
+A `Product` state mutation and every `ProductChangeEvent` it produces
+(zero or more, per "Tracked vs. non-tracked" above) are committed in a
+single Dexie transaction, together with their corresponding `syncQueue`
+entries. This applies the same reasoning already established for stock
+commits (see "Stock-event commit atomicity" below): `Product[field]` is
+defined as the *derived result* of applying LWW across its
+`ProductChangeEvent`s, so a `Product` row must never be persisted without
+the event(s) that justify its tracked-field values, and neither may exist
+in the sync queue without the other. All writes in the transaction succeed
+together or fail together; there is no code path where the `products` row
+updates but a corresponding tracked-field `ProductChangeEvent` silently
+does not, or vice versa.
 
 ### Why cost/margin fields are derived, not stored
 
@@ -409,10 +470,13 @@ same requirement forward if it is later reversed again, per reversal.js's
 ## MongoDB schema
 
 Mirrors the domain model closely. Single-tenant (one shop account), so no
-`shopId` partitioning in v1. `clientId` (the same id generated on-device) is
-the stable identity used for idempotent upserts/inserts.
+`shopId` partitioning in v1. Documents are keyed by `entityId` — the
+stable identity of the target entity (e.g. `Product.id`) — not by
+`clientId`. See "entityId vs. clientId" below for why these must not be
+conflated: `clientId` identifies one sync mutation attempt and is not
+safe as a document key for entities that can be upserted more than once.
 
-- `products` — upserted by `clientId`, last-write-wins per field via
+- `products` — upserted by `entityId`, last-write-wins per field via
   `updatedAt` comparison done in the sync controller. Stored `quantity` is
   the materialized value — server does not independently derive it from
   `stockEvents` on every read, but a reconciliation job/endpoint may
@@ -435,7 +499,8 @@ the stable identity used for idempotent upserts/inserts.
   after the fact if a later-arriving-but-earlier-timestamped write changes
   which record is authoritative — this is the one exception to "events are
   never mutated," and it's narrowly scoped to this single boolean flag.
-- `categories` / `locations` / `tags` / `units` — upserted by `clientId`.
+- `categories` / `locations` / `tags` / `units` — upserted by `entityId`,
+  for the same reason as `products` above.
 - `users` — single document in v1, holds bcrypt hash + refresh token records.
 
 ## Sync model
@@ -449,38 +514,73 @@ SyncQueueEntry
   localId       auto-increment (local only, never synced)
   entityType     'stockEvent' | 'productChangeEvent' | 'product' |
                   'category' | 'location' | 'tag' | 'unit'
-  entityId        string (the clientId of the affected record)
+  entityId        string (stable identity of the target entity, e.g.
+                    Product.id — see "entityId vs. clientId" below)
   operation        'insert' | 'upsert'
   payload           the data to send
-  clientId          string (idempotency key — same as entityId for inserts)
+  clientId          string (unique identity of THIS mutation/sync
+                    operation — see "entityId vs. clientId" below)
   attempts          number
   status             'pending' | 'syncing' | 'done' | 'failed'
   createdAt          ISO datetime
   lastError           string | null
 ```
 
+### `entityId` vs. `clientId`
+
+These are two different identities and must not be conflated:
+
+- **`entityId`** — the stable identity of the *target entity* being
+  synchronized. For a `Product` mutation, `entityId = product.id`, always,
+  regardless of how many times that product is subsequently mutated. This
+  is what the server upserts/inserts against as the document key.
+- **`clientId`** — the unique identity of *this particular sync mutation*
+  (this one queue entry / one sync attempt). Its job is retry-safety: if
+  the same queue entry is redelivered after a dropped response, the
+  server recognizes the same `clientId` and treats it as a no-op rather
+  than reapplying the mutation.
+
+For **insert-only, additive entities** (`StockEvent`, `ProductChangeEvent`),
+one event record represents exactly one mutation and is never re-enqueued
+to represent a different mutation, so `clientId = entityId = event.id` is
+correct and safe.
+
+For **state/upsert entities** (`Product`, `Category`, `Location`, `Tag`,
+`Unit`), the same entity can legitimately be mutated multiple times —
+e.g. a `Product` renamed, then re-priced, then archived, produces three
+separate `syncQueue` entries, all with `entityId = product.id` but each
+needing its own **freshly generated `clientId`**. Reusing `product.id` as
+`clientId` across these three entries would be wrong: it would let the
+server's idempotency check mistake the second and third mutations for
+retries of the first, silently dropping real changes. So for `upsert`
+operations, `clientId` must be generated fresh per queue entry (via the
+same `generateId()` helper used elsewhere), never copied from `entityId`.
+
 Two mutation shapes, matching PRD §31/§32:
 
 1. **Additive** (`StockEvent`, `ProductChangeEvent`): queued with
-   `operation: 'insert'`. Deduplicated server-side by `clientId` so
-   re-delivery is a no-op — this is what makes the queue safe to retry
-   after a dropped response. For a `stockEvent` entry specifically, the
-   queued `payload` is the domain event fields PLUS `appliedQuantity` —
-   never the domain event alone. This is a hard requirement, not an
-   optimization: a `stockEvent` synced without its `appliedQuantity`
-   leaves any device that later receives it via sync unable to correctly
-   reverse a clamped over-removal, silently reintroducing the
-   inventory-inflation bug `appliedQuantity` exists to prevent (see the
-   "AMENDMENT" in the `Product.quantity` section above). The repository
-   that builds this queue entry is responsible for including it every
-   time, and repository tests must assert this explicitly.
-2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued with
-   `operation: 'upsert'`, carrying `updatedAt`. Server applies last-write-wins
-   by comparing `updatedAt` timestamps. A write that loses the comparison is
-   *not* discarded — the client that lost still has a `ProductChangeEvent`
-   recording what it tried to set (with `accepted: false`), per PRD §32
-   ("the earlier change should remain represented in product-change
-   history").
+   `operation: 'insert'`, `clientId = entityId = event.id`. Deduplicated
+   server-side by `clientId` so re-delivery is a no-op — this is what
+   makes the queue safe to retry after a dropped response. For a
+   `stockEvent` entry specifically, the queued `payload` is the domain
+   event fields PLUS `appliedQuantity` — never the domain event alone.
+   This is a hard requirement, not an optimization: a `stockEvent` synced
+   without its `appliedQuantity` leaves any device that later receives it
+   via sync unable to correctly reverse a clamped over-removal, silently
+   reintroducing the inventory-inflation bug `appliedQuantity` exists to
+   prevent (see the "AMENDMENT" in the `Product.quantity` section above).
+   The repository that builds this queue entry is responsible for
+   including it every time, and repository tests must assert this
+   explicitly.
+2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued
+   with `operation: 'upsert'`, `entityId = <entity>.id`, `clientId` freshly
+   generated per entry (see "entityId vs. clientId" above — never reused
+   from `entityId`), carrying `updatedAt`. Server applies last-write-wins
+   by comparing `updatedAt` timestamps, upserting by `entityId`. A write
+   that loses the comparison is *not* discarded — the client that lost
+   still has a `ProductChangeEvent` recording what it tried to set (with
+   `accepted: false`), per PRD §32 ("the earlier change should remain
+   represented in product-change history").
 
 The sync engine drains the queue in order, retries with backoff on failure,
 and marks entries `done` only after a confirmed server response. Querying
