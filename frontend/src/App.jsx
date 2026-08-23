@@ -1,15 +1,21 @@
-// Phase-0 scaffold placeholder.
-//
-// This will become the app shell: router outlet, auth gate, and global
-// providers (sync status, toast/undo notifications). Left minimal on
-// purpose until the domain layer (Phase 1) and local persistence
-// (Phase 2) exist for it to actually wire up to.
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import ProductListPage from './pages/ProductListPage.jsx';
+import ProductFormPage from './pages/ProductFormPage.jsx';
+
+// Phase 2.4 vertical slice: minimal routing for Product list/create/edit
+// only. No auth gate, no dashboard, no additional routes -- those are
+// separate phases. The default route redirects to /products since it is
+// currently the only real screen.
 
 export default function App() {
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem' }}>
-      <h1>ShopStock</h1>
-      <p>Scaffold in progress — see docs/PROGRESS.md for build status.</p>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/products" replace />} />
+        <Route path="/products" element={<ProductListPage />} />
+        <Route path="/products/new" element={<ProductFormPage />} />
+        <Route path="/products/:id/edit" element={<ProductFormPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

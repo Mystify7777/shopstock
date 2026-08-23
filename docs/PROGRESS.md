@@ -458,12 +458,13 @@ documented consistently between code and architecture doc.
   still need their own repository/sync tests once those layers exist (see
   2.2/2.3 below — now written as binding requirements, not suggestions).
 
-## Phase 2 — Local persistence + minimal UI — IN PROGRESS
+## Phase 2 — Local persistence + minimal UI — ✅ COMPLETE
 
 Sequencing per pre-Phase-2 discussion: persistence must be proven
 trustworthy before any UI consumes it. Order: (1) Dexie schema + migration
 harness, (2) repository contracts, (3) repository tests, (4) only then the
-first minimal product screen.
+first minimal product screen. All four completed in that order; no step
+was started before the previous one closed.
 
 ### 2.1 — Dexie schema + migration harness ✅
 
@@ -496,54 +497,190 @@ first minimal product screen.
       confirmed with zero regressions to the existing domain suite after
       adding the global `fake-indexeddb` setup file.
 
-### 2.2 — Repository contracts — NOT STARTED
+      Corrected mid-2.1: `vite.config.js`'s vitest `include` pattern
+      originally only matched `tests/**/*.test.js`, silently excluding
+      nine co-located domain test files under `src/domain/**` (278
+      tests). `npm test` was reporting 97/97 green while 278 real tests
+      never ran. Fixed to `{src,tests}/**/*.test.js` (later widened again
+      to `.test.{js,jsx}` in 2.4 for component tests). All 375 tests
+      confirmed passing once actually collected — the domain code was
+      sound throughout, only the harness was blind to most of it.
 
-Two requirements are now BINDING (not suggestions) on this milestone,
-per the architecture amendment above and the atomicity section added to
+### 2.2 — Repository contracts + implementation ✅
+
+Two requirements were BINDING (not suggestions) on this milestone, per
+the architecture amendment and the atomicity section in
 `docs/ARCHITECTURE.md` ("Stock-event commit atomicity"):
 
 1. Every `syncQueue` payload built for a `stockEvent` entity MUST include
    `appliedQuantity` alongside the domain event fields — never the domain
-   event alone. This is what carries the value across the sync boundary
-   to other devices; without it, `appliedQuantity`'s entire purpose (safe
-   historical reversal per PRD §15, from any device) is defeated.
+   event alone.
 2. A stock-event commit (event write + product quantity update + sync
    queue entry) MUST be a single atomic Dexie transaction, not three
-   independent writes. A partial failure must leave NONE of the three in
-   place — this needs an explicit repository test that simulates a
-   mid-transaction failure and asserts full rollback, not just that the
-   overall call returned an error.
+   independent writes, with an explicit repository test proving full
+   rollback on partial failure.
 
-- [ ] `frontend/src/data/repositories/productRepository.js`
-- [ ] `frontend/src/data/repositories/classificationRepository.js`
-      (categories/locations/tags/units — grouped since they share the
-      same shape and the same deletion-fallback orchestration pattern,
-      per `classificationDeletion.js`)
-- [ ] `frontend/src/data/repositories/stockEventRepository.js` — this is
-      where the resolved `appliedQuantity` column actually gets written
-      (and, per requirement 1 above, also included in the sync queue
-      payload). Commit path calls `applyStockEvent()`, persists the event
-      + `appliedQuantity` + updated product quantity + sync queue entry
-      as ONE Dexie transaction (requirement 2 above). Reversal path reads
-      the stored `appliedQuantity` back for `reversal.js`'s required
-      parameter.
+Both requirements held throughout implementation; no shortcut was taken
+on either.
 
-### 2.3 — Repository tests — NOT STARTED
+- [x] `frontend/src/data/repositories/productRepository.js` —
+      `getById`, `list`, `create`, `update`. `update(product, changeEvents)`
+      accepts already-constructed `ProductChangeEvent` records from the
+      service layer (repository does not diff products or decide which
+      events should exist) and persists product + change events + both
+      corresponding sync entries in one Dexie transaction. Repository-
+      level invariant: `product.quantity` must exactly match the
+      currently stored quantity, or the write is rejected — quantity
+      mutation is exclusively `stockEventRepository`'s path. No `archive()`
+      method: archiving is `update()` with `{ archived: true }`,
+      constructed at the service layer like any other edit.
+      Contract review resolved several non-obvious points before any code
+      was written: `ProductChangeEvent` persistence ownership (repository,
+      not a separate `productChangeEventRepository`), whether Product
+      creation produces change events (no — explicit V1 scope decision,
+      not a derived invariant), and critically, `clientId` semantics —
+      `entityId` identifies the target entity, `clientId` identifies one
+      sync mutation and must be freshly generated per `Product` upsert
+      (never reused from `entityId`), while `ProductChangeEvent` inserts
+      safely use `clientId === entityId` since each event is exactly one
+      immutable mutation. This distinction was wrong in an earlier draft
+      of `docs/ARCHITECTURE.md` (which said "products upserted by
+      `clientId`") and was corrected as part of this milestone.
+      Tested: 40 tests, including atomic rollback proofs (not just error
+      assertions) for both `create()` and `update()`.
+- [x] `frontend/src/data/repositories/classificationRepository.js` —
+      `getById`, `list`, `create`, `update`, parameterized by
+      `entityType` (`'category' | 'location' | 'tag' | 'unit'`), covering
+      all four classification tables with one implementation since they
+      share the same shape and the same deletion-fallback orchestration
+      pattern already owned by `classificationDeletion.js`. `entityType`
+      validated before any DB access. `isDefault` deliberately NOT
+      enforced by the repository — archiving/renaming a default
+      classification is allowed; any UI-level warning about that is a
+      service/UI concern, not a persistence-layer rule. No `updatedAt` /
+      LWW mechanism — classifications don't have one in the current
+      schema, and adding one was explicitly deferred as a Phase 6
+      sync-engine decision rather than expanded here.
+      Tested: 38 tests, including atomic rollback proofs for both
+      `create()` and `update()`.
+- [x] `frontend/src/data/repositories/stockEventRepository.js` — the
+      most structurally complex repository in the codebase. `getById`,
+      `getByProductId`, `commit(...)`, `commitReversal(...)`. Both commit
+      methods take object arguments (not positional) and receive
+      `nextQuantity`/`appliedQuantity` already computed by the service via
+      domain `applyStockEvent()` — the repository never calls
+      `applyStockEvent()` itself. Instead it re-reads the product's
+      current quantity inside the transaction and verifies it against a
+      caller-supplied `expectedCurrentQuantity`, catching stale reads
+      without duplicating domain math. `commit()` is a 3-table
+      transaction (`stockEvents`, `products`, `syncQueue`); `commitReversal()`
+      is also 3 tables but 4 logical writes (new reversal event insert,
+      `reversedBy` patch on the original event via `stockEvents.put()`,
+      product quantity update, two sync entries), all atomic.
+      `commitReversal()` re-checks `storedOriginal.reversedBy === null`
+      (strictly `null`, not `null`-or-`undefined` — corrected during
+      review) and `reversalEvent.reversalOf === originalEventId` before
+      writing, both inside the transaction, so a concurrent reversal
+      attempt or a caller-assembled mismatch is caught rather than
+      trusted. `appliedQuantity` is included in the `stockEvent` sync
+      payload on every commit, per the binding requirement above.
+      Tested: 44 tests, including rollback proofs at every individual
+      write position in both `commit()` and `commitReversal()` (not just
+      "the last write fails") and a clamped-over-removal-then-reversal
+      integration test proving the reversal restores the true applied
+      quantity, not the originally requested one.
 
-CRUD round-trips, migration behavior (once version(2) exists), table
-isolation. For the stock-event commit path specifically, tests MUST cover
-both binding requirements from 2.2 above:
-  - a test asserting the queued sync payload for a stock event contains
-    `appliedQuantity`, not just that the local Dexie write does;
-  - a test simulating a mid-transaction failure (e.g. the product write
-    rejecting) and asserting the event write and sync queue entry were
-    BOTH rolled back — not merely that the operation returned an error.
+### 2.3 — Repository integration review ✅
 
-### 2.4 — First minimal product screen — NOT STARTED
+Audit-only pass confirming the three repositories above have no callers
+yet and no existing code violates their contracts — expected at this
+point in the build, since the service layer and all UI directories were
+still `.gitkeep` placeholders. No changes required; the milestone's own
+content (repository tests) had already been completed alongside 2.2
+rather than as a separate step, consistent with this project's practice
+of shipping tests with implementation rather than after it.
 
-Product list, create product, edit product — repository-backed, with
-domain validation (`productValidation.js`/`productFactory.js`) remaining
-the source of truth for what's a valid write.
+### 2.4 — First minimal product screen ✅
+
+Product list, create product, edit product — repository-backed through a
+real service layer, with domain validation
+(`productValidation.js`/`productFactory.js`) remaining the sole source of
+truth for what's a valid write. No mocked repository or fake data layer
+anywhere in the real path.
+
+- [x] `frontend/src/services/productService.js` — `listProducts`,
+      `getProduct`, `createProduct`, `updateProduct`. Orchestrates domain
+      `createProduct()`/`updateProduct()` then, for updates, diffs old vs.
+      new product across the closed tracked-field set (`name`,
+      `categoryId`→`'category'`, `locationIds`→`'location'`,
+      `tagIds`→`'tags'`, `sellingPrice`, `archived`) to construct zero or
+      more `ProductChangeEvent` records before calling
+      `productRepository.update()`. No `ProductChangeEvent` factory
+      exists in the domain layer (confirmed by inspection, not assumed),
+      so the service constructs these inline with `generateId()` /
+      `timestampNow()`. Array-valued tracked fields compared via
+      `JSON.stringify` — order-sensitive, since nothing in the domain
+      model or PRD establishes `locationIds`/`tagIds` as unordered sets.
+      Does not import Dexie directly; receives an already-constructed
+      `productRepository`.
+      Tested: 16 tests against a real repository backed by
+      `fake-indexeddb` (not mocked) — the service→repository→Dexie path
+      is exercised for real here, including per-tracked-field event
+      generation, zero-event non-tracked edits (e.g. `notes`-only), and
+      confirmation that quantity cannot be changed through this path.
+- [x] `frontend/src/contexts/AppContext.jsx` — composition root context.
+      One `createContext`/`AppProvider`/`useAppContext`, not a DI
+      framework. Services are constructed once in `main.jsx` and passed
+      down; no component or page constructs its own database, repository,
+      or service.
+- [x] `frontend/src/main.jsx` — rewritten as the actual composition root:
+      `createDatabase()` → `createProductRepository(db)` →
+      `createProductService(productRepository)` → `<AppProvider>`.
+- [x] `frontend/src/pages/ProductListPage.jsx` — loading / empty /
+      populated states, Add Product navigation, row-tap navigation to
+      edit, and a low-stock indicator that calls the existing domain
+      `classifyStockStatus()`/`needsAttention()` directly — no
+      low-stock logic duplicated in the component.
+- [x] `frontend/src/pages/ProductFormPage.jsx` — single component for
+      both create and edit, distinguished by route `:id` presence.
+      Fields deliberately limited to `name` + `notes` to prove the full
+      vertical slice without requiring classification pickers, photo
+      upload, or pricing fields (those are later phases). Handles four
+      failure modes explicitly, all corrected during review rather than
+      present from the first draft: product-not-found on edit (was
+      previously an infinite loading spinner if `getProduct()` resolved
+      `undefined`), `getProduct()` rejection (was an unhandled rejection),
+      and `createProduct()`/`updateProduct()` rejection (was also an
+      unhandled rejection, and `saving` could get stuck `true`) — all now
+      surfaced as local, page-scoped error states with `saving` guaranteed
+      to reset on both success and failure paths.
+- [x] `frontend/src/App.jsx` — minimal `react-router-dom` routing:
+      `/products`, `/products/new`, `/products/:id/edit`, plus a default
+      redirect. No route beyond what this slice needs.
+- [x] Component testing infrastructure added: `@testing-library/react`,
+      `@testing-library/jest-dom`, `jsdom`. `vite.config.js` uses
+      `environmentMatchGlobs` so `src/pages/**`/`src/components/**` run
+      under `jsdom` while domain/repository/service tests stay on the
+      faster `node` environment — no global switch to jsdom.
+      `tests/setup/jest-dom.js` is guarded on `typeof document` so it's a
+      no-op under `node`, and explicitly wires `@testing-library/react`'s
+      `cleanup()` via `afterEach` — required because this project doesn't
+      use Vitest's `globals: true` mode, so neither jest-dom's matcher
+      extension nor RTL's auto-cleanup happen for free the way they would
+      under Jest defaults. The missing-cleanup gap was caught by an actual
+      test failure (DOM leaking across tests in the same file) during
+      this milestone, not anticipated in advance.
+      Tested: `ProductListPage.test.jsx` (8 tests: loading, empty,
+      populated, Add Product navigation, row navigation, list-load
+      rejection, low-stock indicator present, low-stock indicator absent
+      for normal stock) and `ProductFormPage.test.jsx` (9 tests: create
+      rendering, valid creation, validation-error rendering, edit
+      loading, valid edit, product-not-found, load rejection, create
+      rejection, update rejection). `productService` is mocked at the
+      `AppContext` boundary in these — the real service→repository→Dexie
+      path is `productService.test.js`'s job, not these.
+
+Full suite at Phase 2 close: **19 test files, 530 tests, 0 failures.**
 
 ## Phase 3 — Stock operations UI — NOT STARTED
 ## Phase 4 — Search — NOT STARTED

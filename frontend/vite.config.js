@@ -43,13 +43,28 @@ export default defineConfig({
   ],
   test: {
     environment: 'node',
-    include: ["{src,tests}/**/*.test.js"],
+    // Component tests (src/components/**, src/pages/**) need a real DOM to
+    // render into and query against, so they run under jsdom. Everything
+    // else (domain, repositories, services) stays on the default `node`
+    // environment above -- no DOM is needed there, and node is faster.
+    environmentMatchGlobs: [
+      ['src/components/**', 'jsdom'],
+      ['src/pages/**', 'jsdom']
+    ],
+    include: ['{src,tests}/**/*.test.{js,jsx}'],
     // fake-indexeddb/auto installs `indexedDB` and `IDBKeyRange` as
     // globals before any test file runs, which is what lets Dexie-backed
     // tests (tests/data/**) work under Node without a real browser. Pure
     // domain tests (tests/domain/**) don't touch IndexedDB at all and are
     // unaffected by this being present.
-    setupFiles: ['./tests/setup/fake-indexeddb.js']
+    //
+    // tests/setup/jest-dom.js is guarded internally (see that file) so it
+    // has no effect under `node` -- it only activates jest-dom matchers
+    // when a DOM is present, i.e. under the jsdom environment above.
+    setupFiles: [
+      './tests/setup/fake-indexeddb.js',
+      './tests/setup/jest-dom.js'
+    ]
   },
   server: {
     port: 5173
