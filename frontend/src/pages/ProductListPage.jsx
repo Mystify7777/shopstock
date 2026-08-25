@@ -8,10 +8,10 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
  * Minimal product list screen -- Phase 2.4 vertical slice.
  *
  * Loading / empty / populated states, an Add Product action, and
- * navigation into a product's edit form on row tap. Low-stock status is
+ * navigation into a product's detail/stock page on row tap (Phase 3:
+ * /products/:id, not the metadata edit form). Low-stock status is
  * computed via the existing domain function (classifyStockStatus) --
- * never recalculated here. No search, no filters, no classification
- * display, no stock actions -- those are later phases.
+ * never recalculated here. No search, no filters -- those are later phases.
  */
 export default function ProductListPage() {
   const { productService } = useAppContext();
@@ -73,7 +73,7 @@ export default function ProductListPage() {
 
             return (
               <li key={product.id}>
-                <button onClick={() => navigate(`/products/${product.id}/edit`)}>
+                <button onClick={() => navigate(`/products/${product.id}`)}>
                   {product.name || 'Unnamed product'} &mdash; {product.quantity}
                   {lowStock && <span role="status"> ({status})</span>}
                 </button>

@@ -35,6 +35,7 @@ function renderWithRoutes(productService) {
         <Routes>
           <Route path="/products" element={<ProductListPage />} />
           <Route path="/products/new" element={<div>New product form</div>} />
+          <Route path="/products/:id" element={<div>Product detail page</div>} />
           <Route path="/products/:id/edit" element={<div>Edit product form</div>} />
         </Routes>
         <LocationDisplay />
@@ -90,7 +91,7 @@ describe('ProductListPage', () => {
     });
   });
 
-  it('navigates to /products/:id/edit when a product row is clicked', async () => {
+  it('navigates to /products/:id when a product row is clicked', async () => {
     const productService = makeMockService({
       listProducts: vi.fn().mockResolvedValue([
         { id: 'p1', name: 'Parle-G', quantity: 12 }
@@ -102,7 +103,7 @@ describe('ProductListPage', () => {
     fireEvent.click(screen.getByText(/Parle-G/));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location')).toHaveTextContent('/products/p1/edit');
+      expect(screen.getByTestId('location')).toHaveTextContent('/products/p1');
     });
   });
 
