@@ -682,7 +682,127 @@ anywhere in the real path.
 
 Full suite at Phase 2 close: **19 test files, 530 tests, 0 failures.**
 
-## Phase 3 — Stock operations UI — NOT STARTED
+## Phase 3 — Stock operations UI — ✅ COMPLETE
+
+Smallest complete vertical slice proving real stock operations end-to-end
+through the UI, preserving every Phase 2 repository contract untouched:
+`stockEventRepository.js`, `productRepository.js`, `applyStockEvent.js`,
+`reversal.js`, and `schema.js` were not modified anywhere in this phase.
+
+Contract review resolved two points that were genuinely undocumented
+before this phase, rather than guessed at:
+
+1. **Reversal-after-subsequent-mutation (Option B, locked).** No existing
+   domain file addressed what happens when reversing an ADD whose
+   `appliedQuantity` can no longer be fully removed because later stock
+   mutations have reduced current quantity below it. Resolved as: the
+   reversal must be BLOCKED before commit, never silently clamped — a
+   clamped reversal would produce a partial reversal while presenting it
+   as a full one. Implemented with zero new domain code: once
+   `createReversalEvent()` builds a reversal event, its `type` is already
+   `'REMOVE'` whenever the original was an ADD, so the existing, unmodified
+   `wouldOverRemove()` already answers the exact question generically
+   ("would this REMOVE-typed event exceed current quantity?"). The guard
+   lives entirely in `stockEventService.reverseEvent()`, called before
+   `applyStockEvent()`/`commitReversal()` — same placement pattern already
+   established for `canBeReversed()`'s two-layer check (service-level
+   fast-fail, repository-level authoritative re-check inside the
+   transaction).
+2. **`wouldOverRemove()` missing-product handling.** Initially proposed to
+   return `false` for a nonexistent product — rejected on review, since
+   that conflates "safe to proceed" with "unknown, product doesn't exist."
+   A boolean return type has no room for a third state, so this method
+   throws the existing `ProductNotFoundError` (imported from
+   `productRepository.js`, not a new error type) rather than silently
+   reporting an operation as safe when it isn't evaluable at all.
+
+- [x] `frontend/src/services/stockEventService.js` — `getHistory`,
+      `getLatestKnownCost`, `wouldOverRemove`, `addStock`, `removeStock`,
+      `reverseEvent`. Loads the current product INTERNALLY in every method
+      that needs it — callers never pass a Product object. Captures
+      `expectedCurrentQuantity` from that internal read and passes it
+      UNCHANGED to `stockEventRepository.commit()`/`commitReversal()`,
+      which remains the sole authoritative concurrency guard (this
+      service's own preflight checks, like `wouldOverRemove()`, are
+      explicitly documented as advisory only — time can pass between a
+      preflight check and an eventual commit). Error semantics kept
+      consistent with the already-established `productService.js`
+      convention: domain/input validation failures and the reversal
+      insufficient-stock guard return via `{ event: null, errors: [...] }`;
+      repository/concurrency throws (`QuantityConsistencyError`,
+      `ProductNotFoundError`, `AlreadyReversedError`,
+      `StockEventNotFoundError`, `ReversalReferenceError`) are NOT caught
+      here and propagate uncaught to the caller, exactly like
+      `productService.js` already does for `productRepository` throws.
+      `getLatestKnownCost()` is a thin wrapper around the existing
+      `calculateCostProjection()` (PRD §11.1's cost-per-unit prefill) —
+      no new pricing abstraction introduced.
+      Tested: 21 tests against real `stockEventRepository` +
+      `productRepository`, backed by `fake-indexeddb`, no mocking —
+      including the two tests this phase treated as non-negotiable: a
+      clamped-original reversal restoring the persisted `appliedQuantity`
+      (not the originally requested `quantity` — the project's own
+      documented near-miss, re-verified here at the service layer) and the
+      Option B insufficient-stock block, which asserts the original event
+      remains unreversed, product quantity is unchanged, no new stock
+      event exists, and no new `syncQueue` entry was created for the
+      blocked attempt — not merely that the call rejected.
+- [x] `frontend/src/pages/ProductDetailPage.jsx` — new route `/products/:id`,
+      now the Product Detail + Stock Operations page. `/products/:id/edit`
+      remains exclusively for metadata editing (unchanged from Phase 2.4).
+      `productService.getProduct()` and `stockEventService.getHistory()`
+      are called independently, each with its own loading/error state — no
+      combined `getProductDetail()` abstraction was introduced. Add Stock
+      form (quantity, cost-per-unit prefilled from `getLatestKnownCost()`,
+      purchase date, comment), Remove Stock form with the PRD §12
+      over-removal Cancel/Continue confirmation, a stock history list
+      showing each entry's comment or the literal "No justification
+      provided" fallback (PRD §13, never invented), a "Reverse this
+      action" control shown only when `canBeReversed()` — direct domain
+      call for pure display, same convention `ProductListPage` already
+      established for `classifyStockStatus()` — and a ~5-second local undo
+      banner implemented as `useState` + `setTimeout` (no toast library).
+      Undo and historical reversal are the SAME operation
+      (`stockEventService.reverseEvent(eventId)`) — no separate undo
+      service or domain path, per `reversal.js`'s own documented design.
+      Corrected during review: the mount-time async loaders originally
+      checked a plain closure `cancelled` flag only once, before their
+      `await` began — meaningless once the call was already in flight,
+      since the loader functions had no way to observe it. Fixed by
+      threading an `isCancelledRef` (`{ current: boolean }`) into
+      `loadProduct()`/`loadHistory()`, checked immediately before every
+      state update that follows their internal `await`; the six other call
+      sites (after `addStock`/`removeStock`/`reverseEvent`) call these
+      loaders with no ref argument, so the guard is a no-op there,
+      preserving their existing behavior exactly.
+      Tested: 16 tests, `productService`/`stockEventService` mocked at the
+      `AppContext` boundary — loading/error states for product and history
+      independently, Add Stock submission and cost prefill, Remove Stock
+      with and without the over-removal warning (including Cancel not
+      calling `removeStock()`), Undo calling `reverseEvent()` with the
+      just-committed event id, per-entry "Reverse this action," an
+      already-reversed entry rendering no reverse control, the
+      reversal-blocked error message rendering inline, and a
+      `wouldOverRemove()` `ProductNotFoundError` throw surfacing as an
+      inline error rather than silently proceeding as if the operation
+      were safe.
+- [x] `frontend/src/contexts/AppContext.jsx` — JSDoc updated;
+      `frontend/src/main.jsx` — composition root now also constructs
+      `stockEventRepository`/`stockEventService` and provides both
+      services; `frontend/src/App.jsx` — added the `/products/:id` route;
+      `frontend/src/pages/ProductListPage.jsx` — row navigation retargeted
+      from `/products/:id/edit` to `/products/:id`, with its test file's
+      route probe and assertion updated to match.
+
+Two review-driven housekeeping corrections, both behavior-preserving: the
+`ProductDetailPage.jsx` async-cleanup fix described above, and one
+`stockEventService.test.js` rename (the stale-`expectedCurrentQuantity`
+test's name previously implied the condition was triggered through the
+service; it actually calls `stockEventRepository.commit()` directly with a
+hand-constructed stale value, which the corrected name now states).
+
+Full suite at Phase 3 close: **21 test files, 567 tests, 0 failures.**
+
 ## Phase 4 — Search — NOT STARTED
 ## Phase 5 — Backend (Express + MongoDB + auth) — NOT STARTED
 ## Phase 6 — Sync engine — NOT STARTED
