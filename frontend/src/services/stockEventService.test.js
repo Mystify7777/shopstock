@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../data/db/schema.js';
 import { createProductRepository } from '../data/repositories/productRepository.js';
+import { createClassificationRepository } from '../data/repositories/classificationRepository.js';
 import { createStockEventRepository, QuantityConsistencyError } from '../data/repositories/stockEventRepository.js';
 import { ProductNotFoundError } from '../data/repositories/productRepository.js';
 import { createProductService } from './productService.js';
@@ -9,10 +10,17 @@ import { createStockEventService } from './stockEventService.js';
 // Real repositories, real fake-indexeddb -- no mocking. This exercises the
 // full service -> domain -> repository -> Dexie path for stock operations,
 // mirroring the established productService.test.js pattern.
+//
+// productService here is only used as a fixture-builder helper
+// (createProduct()) to set up products for stock-event tests -- this file
+// never calls productService.searchProducts(). classificationRepository is
+// still supplied because createProductService() requires both repositories
+// as of the Phase 4A corrective pass.
 
 describe('stockEventService', () => {
   let db;
   let productRepository;
+  let classificationRepository;
   let stockEventRepository;
   let productService;
   let stockEventService;
@@ -20,8 +28,9 @@ describe('stockEventService', () => {
   beforeEach(() => {
     db = createDatabase();
     productRepository = createProductRepository(db);
+    classificationRepository = createClassificationRepository(db);
     stockEventRepository = createStockEventRepository(db);
-    productService = createProductService(productRepository);
+    productService = createProductService(productRepository, classificationRepository);
     stockEventService = createStockEventService(stockEventRepository, productRepository);
   });
 

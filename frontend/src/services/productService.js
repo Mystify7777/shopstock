@@ -11,18 +11,28 @@
 //     "the factory does not decide when ProductChangeEvents should be
 //     created -- that's service-layer orchestration")
 //   - calling productRepository to persist
+//   - (Phase 4A) loading the active product dataset + resolving
+//     classification ID references to display names, building a TRANSIENT
+//     in-memory search projection, and delegating to the pure domain
+//     search function
 //
 // Does NOT:
-//   - import Dexie or create its own database (receives an already-built
-//     productRepository)
+//   - import Dexie or create its own database (receives already-built
+//     repositories)
 //   - duplicate product validation (validateProduct() is called exactly
 //     once, inside createProduct()/updateProduct())
 //   - calculate stock, cost, or margin
 //   - implement repository persistence logic
+//   - persist the search projection, mutate Product, or alter IndexedDB
+//     records in any way as part of searching -- the projection built for
+//     search exists only for the duration of one searchProducts() call
+//   - configure or invoke Fuse.js directly (that lives in
+//     domain/search/productSearch.js)
 
 import { createProduct, updateProduct } from '../domain/product/productFactory.js';
 import { generateId } from '../domain/shared/ids.js';
 import { timestampNow } from '../domain/shared/dates.js';
+import { searchProducts as domainSearchProducts, isEmptyQuery } from '../domain/search/productSearch.js';
 
 // ---------------------------------------------------------------------------
 // Tracked-field mapping
@@ -101,11 +111,27 @@ function buildChangeEvents(existing, updated) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a product service backed by the given product repository.
+ * Create a product service backed by the given repositories.
+ *
+ * Both repositories are required. searchProducts() resolves categoryId /
+ * tagIds / locationIds through classificationRepository -- a missing
+ * classificationRepository would surface as a runtime failure only when
+ * searchProducts() is actually called, which is worse than failing at
+ * construction time. Every call site must supply both.
  *
  * @param {object} productRepository Result of createProductRepository(db).
+ * @param {object} classificationRepository Result of
+ *   createClassificationRepository(db).
+ * @throws {TypeError} If either repository is missing.
  */
-export function createProductService(productRepository) {
+export function createProductService(productRepository, classificationRepository) {
+  if (!productRepository) {
+    throw new TypeError('createProductService() requires a productRepository.');
+  }
+  if (!classificationRepository) {
+    throw new TypeError('createProductService() requires a classificationRepository.');
+  }
+
 
   /**
    * List products, defaulting to active (non-archived) only.
@@ -172,10 +198,106 @@ export function createProductService(productRepository) {
     return { product, errors: [] };
   }
 
+  // ---------------------------------------------------------------------------
+  // searchProducts (Phase 4A)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build an id -> name lookup map for one classification entity type,
+   * across ALL records (including archived) -- a product can still
+   * reference an archived category/location/tag, and search must resolve
+   * its name rather than crash or silently omit the field. Uses only the
+   * existing classificationRepository.list() contract; no batch-resolve
+   * method was added, per the approved Phase 4 contract ("do not add a
+   * classification batch repository abstraction unless implementation
+   * proves the existing API genuinely insufficient" -- it did not).
+   *
+   * @param {string} entityType 'category' | 'location' | 'tag'
+   * @returns {Promise<Map<string, string>>}
+   */
+  async function buildNameMap(entityType) {
+    const records = await classificationRepository.list(entityType, {
+      includeArchived: true
+    });
+    const map = new Map();
+    for (const record of records) {
+      map.set(record.id, record.name);
+    }
+    return map;
+  }
+
+  /**
+   * Resolve a product's classification ID references into display names,
+   * building the TRANSIENT search projection the domain search function
+   * requires. This projection is never persisted, never written back to
+   * IndexedDB, and never mutates the Product object it wraps -- it exists
+   * only for the duration of one searchProducts() call.
+   *
+   * A missing/unresolvable reference (e.g. a categoryId with no matching
+   * record) resolves to an empty string / is simply omitted from the
+   * tags-or-locations array, rather than throwing -- a dangling reference
+   * must not crash search.
+   *
+   * @param {object} product
+   * @param {Map<string,string>} categoryNames
+   * @param {Map<string,string>} locationNames
+   * @param {Map<string,string>} tagNames
+   * @returns {import('../domain/search/productSearch.js').SearchableProduct}
+   */
+  function toSearchableProduct(product, categoryNames, locationNames, tagNames) {
+    return {
+      product,
+      name: product.name || '',
+      notes: product.notes || '',
+      category: categoryNames.get(product.categoryId) || '',
+      tags: (product.tagIds || [])
+        .map((id) => tagNames.get(id))
+        .filter(Boolean),
+      locations: (product.locationIds || [])
+        .map((id) => locationNames.get(id))
+        .filter(Boolean)
+    };
+  }
+
+  /**
+   * Fuzzy + exact product search.
+   *
+   * Per the approved Phase 4A contract: does not call the domain search
+   * function for an empty/whitespace-only query -- returns the same empty
+   * shape immediately, without loading products or classification data at
+   * all (no repository calls for an empty query).
+   *
+   * Archived products are excluded (same default as listProducts()/
+   * productRepository.list()).
+   *
+   * @param {string} query
+   * @returns {Promise<{ matches: object[], related: object[], hasExactMatch: boolean }>}
+   */
+  async function searchProductsUseCase(query) {
+    if (isEmptyQuery(query)) {
+      return { matches: [], related: [], hasExactMatch: false };
+    }
+
+    const products = await productRepository.list({ includeArchived: false });
+
+    const [categoryNames, locationNames, tagNames] = await Promise.all([
+      buildNameMap('category'),
+      buildNameMap('location'),
+      buildNameMap('tag')
+    ]);
+
+    const searchableProducts = products.map((product) =>
+      toSearchableProduct(product, categoryNames, locationNames, tagNames)
+    );
+
+    return domainSearchProducts(searchableProducts, query);
+  }
+
   return {
     listProducts,
     getProduct,
     createProduct: createProductUseCase,
-    updateProduct: updateProductUseCase
+    updateProduct: updateProductUseCase,
+    searchProducts: searchProductsUseCase
   };
 }

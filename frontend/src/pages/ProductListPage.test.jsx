@@ -16,6 +16,7 @@ function makeMockService(overrides = {}) {
     getProduct: vi.fn(),
     createProduct: vi.fn(),
     updateProduct: vi.fn(),
+    searchProducts: vi.fn().mockResolvedValue({ matches: [], related: [], hasExactMatch: false }),
     ...overrides
   };
 }
@@ -146,5 +147,194 @@ describe('ProductListPage', () => {
       expect(screen.getByText(/Well Stocked Item/)).toBeInTheDocument();
     });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  // ===========================================================================
+  // Search (Phase 4A)
+  // ===========================================================================
+
+  describe('search', () => {
+    it('renders a search input', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([])
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+      expect(screen.getByLabelText(/search/i)).toBeInTheDocument();
+    });
+
+    it('typing updates the query input value', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([])
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      const input = screen.getByLabelText(/search/i);
+      fireEvent.change(input, { target: { value: 'parle' } });
+      expect(input).toHaveValue('parle');
+    });
+
+    it('does not call searchProducts before the debounce window elapses', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([])
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      vi.useFakeTimers();
+      const input = screen.getByLabelText(/search/i);
+      fireEvent.change(input, { target: { value: 'parle' } });
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(productService.searchProducts).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('calls searchProducts once the debounce window elapses', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({
+          matches: [{ id: 'p1', name: 'Parle-G', quantity: 10 }],
+          related: [],
+          hasExactMatch: true
+        })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      vi.useFakeTimers();
+      const input = screen.getByLabelText(/search/i);
+      fireEvent.change(input, { target: { value: 'Parle-G' } });
+
+      await vi.advanceTimersByTimeAsync(450);
+      expect(productService.searchProducts).toHaveBeenCalledWith('Parle-G');
+
+      vi.useRealTimers();
+    });
+
+    it('rapid typing collapses to a single searchProducts call with the final value', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({ matches: [], related: [], hasExactMatch: false })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      vi.useFakeTimers();
+      const input = screen.getByLabelText(/search/i);
+      fireEvent.change(input, { target: { value: 'p' } });
+      await vi.advanceTimersByTimeAsync(100);
+      fireEvent.change(input, { target: { value: 'pa' } });
+      await vi.advanceTimersByTimeAsync(100);
+      fireEvent.change(input, { target: { value: 'parle' } });
+      await vi.advanceTimersByTimeAsync(450);
+
+      expect(productService.searchProducts).toHaveBeenCalledTimes(1);
+      expect(productService.searchProducts).toHaveBeenCalledWith('parle');
+
+      vi.useRealTimers();
+    });
+
+    it('renders matching search results', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({
+          matches: [{ id: 'p1', name: 'Parle-G', quantity: 10 }],
+          related: [],
+          hasExactMatch: true
+        })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'Parle-G' } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Parle-G/)).toBeInTheDocument();
+      });
+    });
+
+    it('clearing the search input restores the normal product list', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([
+          { id: 'p1', name: 'Good Day', quantity: 8 }
+        ]),
+        searchProducts: vi.fn().mockResolvedValue({
+          matches: [{ id: 'p2', name: 'Parle-G', quantity: 10 }],
+          related: [],
+          hasExactMatch: true
+        })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/Good Day/));
+
+      const input = screen.getByLabelText(/search/i);
+      fireEvent.change(input, { target: { value: 'Parle-G' } });
+      await waitFor(() => screen.getByText(/Parle-G/));
+
+      fireEvent.change(input, { target: { value: '' } });
+      await waitFor(() => {
+        expect(screen.getByText(/Good Day/)).toBeInTheDocument();
+        expect(screen.queryByText(/Parle-G/)).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows an empty search-results state distinct from the normal empty state', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({ matches: [], related: [], hasExactMatch: false })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'zzznomatch' } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/no products match your search/i)).toBeInTheDocument();
+      });
+    });
+
+    it('existing navigation still works from a search result row', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({
+          matches: [{ id: 'p1', name: 'Parle-G', quantity: 10 }],
+          related: [],
+          hasExactMatch: true
+        })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'Parle-G' } });
+      await waitFor(() => screen.getByText(/Parle-G/));
+      fireEvent.click(screen.getByText(/Parle-G/));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('location')).toHaveTextContent('/products/p1');
+      });
+    });
+
+    it('existing low-stock indicator still renders on a search result row', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([]),
+        searchProducts: vi.fn().mockResolvedValue({
+          matches: [{ id: 'p1', name: 'Low Stock Item', quantity: 3 }],
+          related: [],
+          hasExactMatch: true
+        })
+      });
+      renderWithRoutes(productService);
+      await waitFor(() => screen.getByText(/no products yet/i));
+
+      fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'Low Stock' } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Low Stock Item/)).toBeInTheDocument();
+      });
+      expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+    });
   });
 });

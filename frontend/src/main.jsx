@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import { createDatabase } from './data/db/schema.js';
 import { createProductRepository } from './data/repositories/productRepository.js';
+import { createClassificationRepository } from './data/repositories/classificationRepository.js';
 import { createStockEventRepository } from './data/repositories/stockEventRepository.js';
 import { createProductService } from './services/productService.js';
 import { createStockEventService } from './services/stockEventService.js';
@@ -15,15 +16,17 @@ import { AppProvider } from './contexts/AppContext.jsx';
 //
 //   createDatabase()
 //     -> createProductRepository(db)
-//       -> createProductService(productRepository)
+//     -> createClassificationRepository(db)
+//       -> createProductService(productRepository, classificationRepository)
 //     -> createStockEventRepository(db)
 //       -> createStockEventService(stockEventRepository, productRepository)
 //         -> React application (via AppProvider)
 
 const db = createDatabase();
 const productRepository = createProductRepository(db);
+const classificationRepository = createClassificationRepository(db);
 const stockEventRepository = createStockEventRepository(db);
-const productService = createProductService(productRepository);
+const productService = createProductService(productRepository, classificationRepository);
 const stockEventService = createStockEventService(stockEventRepository, productRepository);
 
 ReactDOM.createRoot(document.getElementById('root')).render(

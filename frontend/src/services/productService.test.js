@@ -1,22 +1,47 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../data/db/schema.js';
 import { createProductRepository } from '../data/repositories/productRepository.js';
+import { createClassificationRepository } from '../data/repositories/classificationRepository.js';
 import { createProductService } from './productService.js';
 
 describe('productService', () => {
   let db;
   let repository;
+  let classificationRepository;
   let service;
 
   beforeEach(() => {
     db = createDatabase();
     repository = createProductRepository(db);
-    service = createProductService(repository);
+    classificationRepository = createClassificationRepository(db);
+    service = createProductService(repository, classificationRepository);
   });
 
   afterEach(async () => {
     if (db.isOpen()) db.close();
     await db.delete();
+  });
+
+  // =========================================================================
+  // Constructor -- both repositories are required
+  // =========================================================================
+
+  describe('createProductService construction', () => {
+    it('throws if productRepository is missing', () => {
+      expect(() => createProductService(undefined, classificationRepository)).toThrow(TypeError);
+    });
+
+    it('throws if classificationRepository is missing', () => {
+      expect(() => createProductService(repository, undefined)).toThrow(TypeError);
+    });
+
+    it('throws if both are missing', () => {
+      expect(() => createProductService()).toThrow(TypeError);
+    });
+
+    it('constructs successfully when both are supplied', () => {
+      expect(() => createProductService(repository, classificationRepository)).not.toThrow();
+    });
   });
 
   // =========================================================================
@@ -170,6 +195,140 @@ describe('productService', () => {
       await service.updateProduct(product, { locationIds: ['shelf-a', 'shelf-b'] });
       const events = await db.productChangeEvents.toArray();
       expect(events).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
+  // searchProducts (Phase 4A)
+  //
+  // Real productRepository + classificationRepository, real fake-indexeddb
+  // -- no mocking, matching every other service test file's convention.
+  // =========================================================================
+
+  describe('searchProducts', () => {
+    it('returns empty results for an empty query without calling the repository', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+
+      const listSpy = repository.list;
+      let listCalled = false;
+      repository.list = async (...args) => {
+        listCalled = true;
+        return listSpy(...args);
+      };
+
+      const result = await service.searchProducts('');
+
+      expect(result).toEqual({ matches: [], related: [], hasExactMatch: false });
+      expect(listCalled).toBe(false);
+
+      repository.list = listSpy;
+    });
+
+    it('returns empty results for a whitespace-only query without calling the repository', async () => {
+      const listSpy = repository.list;
+      let listCalled = false;
+      repository.list = async (...args) => {
+        listCalled = true;
+        return listSpy(...args);
+      };
+
+      const result = await service.searchProducts('   ');
+
+      expect(result).toEqual({ matches: [], related: [], hasExactMatch: false });
+      expect(listCalled).toBe(false);
+
+      repository.list = listSpy;
+    });
+
+    it('finds a product by exact name match', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+      const result = await service.searchProducts('Parle-G');
+      expect(result.hasExactMatch).toBe(true);
+      expect(result.matches.map((p) => p.name)).toContain('Parle-G');
+    });
+
+    it('finds a product by fuzzy/typo name match', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+      const result = await service.searchProducts('parleg');
+      expect(result.hasExactMatch).toBe(false);
+      expect(result.matches.map((p) => p.name)).toContain('Parle-G');
+    });
+
+    it('resolves categoryId to the category name and matches on it', async () => {
+      const category = await classificationRepository.create('category', {
+        id: 'cat-snacks', name: 'Snacks', archived: false, isDefault: false
+      });
+      await service.createProduct({ name: 'Chips', categoryId: category.id });
+
+      const result = await service.searchProducts('Snacks');
+      expect(result.matches.map((p) => p.name)).toContain('Chips');
+    });
+
+    it('resolves tagIds to tag names and matches on them', async () => {
+      const tag = await classificationRepository.create('tag', {
+        id: 'tag-popular', name: 'popular', archived: false, isDefault: false
+      });
+      await service.createProduct({ name: 'Bestseller', tagIds: [tag.id] });
+
+      const result = await service.searchProducts('popular');
+      expect(result.matches.map((p) => p.name)).toContain('Bestseller');
+    });
+
+    it('resolves locationIds to location names and matches on them', async () => {
+      const location = await classificationRepository.create('location', {
+        id: 'loc-shelfa2', name: 'Shelf A2', archived: false, isDefault: false
+      });
+      await service.createProduct({ name: 'Cereal', locationIds: [location.id] });
+
+      const result = await service.searchProducts('Shelf A2');
+      expect(result.matches.map((p) => p.name)).toContain('Cereal');
+    });
+
+    it('excludes archived products from search results', async () => {
+      const { product } = await service.createProduct({ name: 'Discontinued Item' });
+      await service.updateProduct(product, { archived: true });
+
+      const result = await service.searchProducts('Discontinued');
+      expect(result.matches.map((p) => p.id)).not.toContain(product.id);
+    });
+
+    it('a dangling categoryId (no matching classification record) does not crash search', async () => {
+      await service.createProduct({ name: 'Orphaned Category Product', categoryId: 'nonexistent-cat-id' });
+      const result = await service.searchProducts('Orphaned');
+      expect(result.matches.map((p) => p.name)).toContain('Orphaned Category Product');
+    });
+
+    it('a dangling tagId (no matching classification record) does not crash search', async () => {
+      await service.createProduct({ name: 'Orphaned Tag Product', tagIds: ['nonexistent-tag-id'] });
+      const result = await service.searchProducts('Orphaned');
+      expect(result.matches.map((p) => p.name)).toContain('Orphaned Tag Product');
+    });
+
+    it('a dangling locationId (no matching classification record) does not crash search', async () => {
+      const { product } = await service.createProduct({
+        name: 'Orphaned Location Product', locationIds: ['nonexistent-loc-id']
+      });
+      const result = await service.searchProducts('Orphaned');
+      expect(result.matches.map((p) => p.name)).toContain('Orphaned Location Product');
+
+      // The unresolved location must simply not appear in the transient
+      // projection -- and the Product object itself must remain unchanged.
+      const stored = await service.getProduct(product.id);
+      expect(stored.locationIds).toEqual(['nonexistent-loc-id']); // untouched
+    });
+
+    it('the transient search projection does not mutate the stored product', async () => {
+      const { product } = await service.createProduct({ name: 'Untouched' });
+      await service.searchProducts('Untouched');
+      const stored = await service.getProduct(product.id);
+      expect(stored).toEqual(product);
+    });
+
+    it('returns an empty matches array when nothing matches', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+      const result = await service.searchProducts('zzznomatchzzz');
+      expect(result.matches).toEqual([]);
+      expect(result.hasExactMatch).toBe(false);
     });
   });
 });

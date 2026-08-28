@@ -49,7 +49,8 @@ export default defineConfig({
     // environment above -- no DOM is needed there, and node is faster.
     environmentMatchGlobs: [
       ['src/components/**', 'jsdom'],
-      ['src/pages/**', 'jsdom']
+      ['src/pages/**', 'jsdom'],
+      ['src/hooks/**', 'jsdom']
     ],
     include: ['{src,tests}/**/*.test.{js,jsx}'],
     // fake-indexeddb/auto installs `indexedDB` and `IDBKeyRange` as
