@@ -31,7 +31,7 @@ const stockEventService = createStockEventService(stockEventRepository, productR
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AppProvider services={{ productService, stockEventService }}>
+    <AppProvider services={{ productService, stockEventService, classificationRepository }}>
       <App />
     </AppProvider>
   </React.StrictMode>

@@ -137,6 +137,138 @@ function hasExactFieldMatch(entry, normalizedQuery) {
 }
 
 // ---------------------------------------------------------------------------
+// Related results (Phase 4B)
+//
+// Approved contract: AGGREGATE metadata pool derived from the complete
+// `matches` set (not a per-candidate similarity score against each
+// individual match). A candidate is related if it shares at least one
+// value from that pool. No second Fuse instance, no numeric scoring.
+//
+// Ranking is a strict four-tier ordinal comparison:
+//   1. shared category -- boolean priority (any category-sharing candidate
+//      outranks every non-category-sharing candidate, regardless of tag/
+//      location counts)
+//   2. shared tag count (within the same category-sharing tier)
+//   3. shared location count (within the same tag-sharing tier)
+//   4. stable original order (complete ties)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the aggregate relatedness metadata pool from the matched entries:
+ * every category, tag, and location value across ALL of `matches` combined
+ * into one pool each -- not evaluated per-match.
+ *
+ * @param {SearchableProduct[]} matchedEntries
+ * @returns {{ categories: Set<string>, tags: Set<string>, locations: Set<string> }}
+ */
+function buildRelatedMetadataPool(matchedEntries) {
+  const categories = new Set();
+  const tags = new Set();
+  const locations = new Set();
+
+  for (const entry of matchedEntries) {
+    if (entry.category) categories.add(entry.category);
+    for (const tag of entry.tags) tags.add(tag);
+    for (const loc of entry.locations) locations.add(loc);
+  }
+
+  return { categories, tags, locations };
+}
+
+/**
+ * Count how many of an entry's tags/locations fall in the given pool sets.
+ *
+ * @param {string[]} values
+ * @param {Set<string>} pool
+ * @returns {number}
+ */
+function countSharedValues(values, pool) {
+  let count = 0;
+  for (const value of values) {
+    if (pool.has(value)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Derive related products for a completed search, per the approved Phase
+ * 4B contract. Returns [] immediately (no derivation performed) when:
+ *   - there was an exact match (matches remain primary, no related seed
+ *     needed), or
+ *   - there are no matches at all (no metadata pool to derive from).
+ *
+ * `searchableProducts` is the SAME array searchProducts() already received
+ * -- archived products are excluded upstream by the caller (productService
+ * only ever passes active products), so no additional archived-filtering
+ * is needed or duplicated here.
+ *
+ * @param {SearchableProduct[]} searchableProducts Full candidate pool
+ *   (same input searchProducts() received).
+ * @param {object[]} matches Product objects already selected as closest
+ *   fuzzy matches (unwrapped, as returned by searchProducts()).
+ * @param {boolean} hasExactMatch
+ * @returns {object[]} Related Product objects, ranked, deduplicated,
+ *   disjoint from `matches`.
+ */
+function deriveRelated(searchableProducts, matches, hasExactMatch) {
+  if (hasExactMatch || matches.length === 0) {
+    return [];
+  }
+
+  const matchedIds = new Set(matches.map((product) => product.id));
+
+  const matchedEntries = searchableProducts.filter((entry) =>
+    matchedIds.has(entry.product.id)
+  );
+
+  const { categories, tags, locations } = buildRelatedMetadataPool(matchedEntries);
+
+  // Preserve original index for the stable-tie-break tier -- computed
+  // before filtering so "original order" means the original searchable
+  // dataset order, not the post-filter candidate order.
+  const candidates = [];
+  searchableProducts.forEach((entry, originalIndex) => {
+    if (matchedIds.has(entry.product.id)) return; // disjoint from matches
+
+    const sharesCategory = Boolean(entry.category) && categories.has(entry.category);
+    const sharedTagCount = countSharedValues(entry.tags, tags);
+    const sharedLocationCount = countSharedValues(entry.locations, locations);
+    const isRelated = sharesCategory || sharedTagCount > 0 || sharedLocationCount > 0;
+
+    if (!isRelated) return;
+
+    candidates.push({ entry, sharesCategory, sharedTagCount, sharedLocationCount, originalIndex });
+  });
+
+  // Deduplicate by product id (a searchableProducts array should already
+  // be one entry per product, but dedup defensively per the contract's
+  // explicit "duplicate candidates deduplicated" test requirement).
+  const seen = new Set();
+  const deduped = [];
+  for (const candidate of candidates) {
+    const id = candidate.entry.product.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    deduped.push(candidate);
+  }
+
+  deduped.sort((a, b) => {
+    if (a.sharesCategory !== b.sharesCategory) {
+      return a.sharesCategory ? -1 : 1;
+    }
+    if (a.sharedTagCount !== b.sharedTagCount) {
+      return b.sharedTagCount - a.sharedTagCount;
+    }
+    if (a.sharedLocationCount !== b.sharedLocationCount) {
+      return b.sharedLocationCount - a.sharedLocationCount;
+    }
+    return a.originalIndex - b.originalIndex;
+  });
+
+  return deduped.map((candidate) => candidate.entry.product);
+}
+
+// ---------------------------------------------------------------------------
 // Public search function
 // ---------------------------------------------------------------------------
 
@@ -159,8 +291,9 @@ function hasExactFieldMatch(entry, normalizedQuery) {
  *   SearchableProduct entry), ordered by Fuse relevance (best first).
  *   Fuse's own score is NOT included -- callers receive products, not
  *   Fuse internals, per the approved contract.
- * @property {object[]} related Always [] in Phase 4A -- populated in
- *   Phase 4B.
+ * @property {object[]} related Related Product objects (Phase 4B), derived
+ *   from an aggregate metadata pool over `matches` -- see deriveRelated().
+ *   Always [] when hasExactMatch is true or matches is empty.
  * @property {boolean} hasExactMatch True if any entry has a field whose
  *   normalized value exactly equals the normalized query.
  */
@@ -189,5 +322,7 @@ export function searchProducts(searchableProducts, query) {
 
   const matches = fuseResults.map((result) => result.item.product);
 
-  return { matches, related: [], hasExactMatch };
+  const related = deriveRelated(searchableProducts, matches, hasExactMatch);
+
+  return { matches, related, hasExactMatch };
 }

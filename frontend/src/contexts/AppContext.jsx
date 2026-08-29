@@ -14,7 +14,7 @@ const AppContext = createContext(null);
 
 /**
  * @param {{ children: React.ReactNode, services: object }} props
- *   services shape: { productService, stockEventService }
+ *   services shape: { productService, stockEventService, classificationRepository }
  */
 export function AppProvider({ children, services }) {
   return (
@@ -25,7 +25,7 @@ export function AppProvider({ children, services }) {
 }
 
 /**
- * @returns {{ productService: object, stockEventService: object }}
+ * @returns {{ productService: object, stockEventService: object, classificationRepository: object }}
  * @throws {Error} if called outside an AppProvider
  */
 export function useAppContext() {

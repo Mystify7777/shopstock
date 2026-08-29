@@ -331,4 +331,190 @@ describe('productService', () => {
       expect(result.hasExactMatch).toBe(false);
     });
   });
+
+  // =========================================================================
+  // searchProducts filters (Phase 4C)
+  // =========================================================================
+
+  describe('searchProducts filters', () => {
+    async function makeClassifications() {
+      const catSnacks = await classificationRepository.create('category', {
+        id: 'cat-snacks', name: 'Snacks', archived: false, isDefault: false
+      });
+      const catCleaning = await classificationRepository.create('category', {
+        id: 'cat-cleaning', name: 'Cleaning', archived: false, isDefault: false
+      });
+      const locShelfA = await classificationRepository.create('location', {
+        id: 'loc-shelf-a', name: 'Shelf A', archived: false, isDefault: false
+      });
+      const locWarehouse = await classificationRepository.create('location', {
+        id: 'loc-warehouse', name: 'Warehouse', archived: false, isDefault: false
+      });
+      const locBackRoom = await classificationRepository.create('location', {
+        id: 'loc-back-room', name: 'Back Room', archived: false, isDefault: false
+      });
+      const tagPopular = await classificationRepository.create('tag', {
+        id: 'tag-popular', name: 'Popular', archived: false, isDefault: false
+      });
+      const tagSale = await classificationRepository.create('tag', {
+        id: 'tag-sale', name: 'Sale', archived: false, isDefault: false
+      });
+      const tagFragile = await classificationRepository.create('tag', {
+        id: 'tag-fragile', name: 'Fragile', archived: false, isDefault: false
+      });
+      return { catSnacks, catCleaning, locShelfA, locWarehouse, locBackRoom, tagPopular, tagSale, tagFragile };
+    }
+
+    it('category filter (single-select) narrows results to matching categoryId', async () => {
+      const { catSnacks, catCleaning } = await makeClassifications();
+      await service.createProduct({ name: 'Chips', categoryId: catSnacks.id });
+      await service.createProduct({ name: 'Detergent', categoryId: catCleaning.id });
+
+      const result = await service.searchProducts('', { categoryId: catSnacks.id });
+      const names = result.matches.map((p) => p.name);
+      expect(names).toContain('Chips');
+      expect(names).not.toContain('Detergent');
+    });
+
+    it('location filter (multi-select) is OR -- matches ANY selected location', async () => {
+      const { locShelfA, locWarehouse, locBackRoom } = await makeClassifications();
+      await service.createProduct({ name: 'On Shelf A', locationIds: [locShelfA.id] });
+      await service.createProduct({ name: 'In Warehouse', locationIds: [locWarehouse.id] });
+      await service.createProduct({ name: 'In Back Room', locationIds: [locBackRoom.id] });
+
+      const result = await service.searchProducts('', {
+        locationIds: [locShelfA.id, locWarehouse.id]
+      });
+      const names = result.matches.map((p) => p.name);
+      expect(names).toContain('On Shelf A');
+      expect(names).toContain('In Warehouse');
+      expect(names).not.toContain('In Back Room');
+    });
+
+    it('tag filter (multi-select) is OR -- matches ANY selected tag', async () => {
+      const { tagPopular, tagSale, tagFragile } = await makeClassifications();
+      await service.createProduct({ name: 'Popular Item', tagIds: [tagPopular.id] });
+      await service.createProduct({ name: 'Sale Item', tagIds: [tagSale.id] });
+      await service.createProduct({ name: 'Fragile Item', tagIds: [tagFragile.id] });
+
+      const result = await service.searchProducts('', {
+        tagIds: [tagPopular.id, tagSale.id]
+      });
+      const names = result.matches.map((p) => p.name);
+      expect(names).toContain('Popular Item');
+      expect(names).toContain('Sale Item');
+      expect(names).not.toContain('Fragile Item');
+    });
+
+    it('category + location + tag filters combine as AND across groups', async () => {
+      const { catSnacks, locShelfA, locWarehouse, tagPopular, tagSale } = await makeClassifications();
+
+      // Matches all three groups.
+      await service.createProduct({
+        name: 'Match All', categoryId: catSnacks.id, locationIds: [locShelfA.id], tagIds: [tagPopular.id]
+      });
+      // Right category + location, wrong tag group entirely (no overlap).
+      await service.createProduct({
+        name: 'Wrong Tag', categoryId: catSnacks.id, locationIds: [locShelfA.id], tagIds: []
+      });
+      // Right category, wrong location.
+      await service.createProduct({
+        name: 'Wrong Location', categoryId: catSnacks.id, locationIds: [locWarehouse.id], tagIds: [tagPopular.id]
+      });
+
+      const result = await service.searchProducts('', {
+        categoryId: catSnacks.id,
+        locationIds: [locShelfA.id],
+        tagIds: [tagPopular.id, tagSale.id]
+      });
+      const names = result.matches.map((p) => p.name);
+      expect(names).toEqual(['Match All']);
+    });
+
+    it('filters-only (empty query) returns filtered products without invoking Fuse/domain search', async () => {
+      const { catSnacks } = await makeClassifications();
+      await service.createProduct({ name: 'Chips', categoryId: catSnacks.id });
+      await service.createProduct({ name: 'Soap' });
+
+      const result = await service.searchProducts('', { categoryId: catSnacks.id });
+
+      expect(result.matches.map((p) => p.name)).toEqual(['Chips']);
+      expect(result.related).toEqual([]);
+      expect(result.hasExactMatch).toBe(false);
+    });
+
+    it('filters + text together narrow the candidate set before fuzzy search runs', async () => {
+      const { catSnacks, catCleaning } = await makeClassifications();
+      await service.createProduct({ name: 'Parle-G', categoryId: catSnacks.id });
+      await service.createProduct({ name: 'Parle Marie', categoryId: catCleaning.id });
+
+      // Fuzzy query "parleg" would normally match both by name -- the
+      // category filter must exclude the one outside the filtered set.
+      const result = await service.searchProducts('parleg', { categoryId: catSnacks.id });
+      const names = result.matches.map((p) => p.name);
+      expect(names).toContain('Parle-G');
+      expect(names).not.toContain('Parle Marie');
+    });
+
+    it('no filters + text -- unchanged existing behavior', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+      const result = await service.searchProducts('parleg');
+      expect(result.matches.map((p) => p.name)).toContain('Parle-G');
+    });
+
+    it('no filters + no text -- unchanged existing empty-result behavior, no repository call', async () => {
+      await service.createProduct({ name: 'Parle-G' });
+
+      const listSpy = repository.list;
+      let listCalled = false;
+      repository.list = async (...args) => {
+        listCalled = true;
+        return listSpy(...args);
+      };
+
+      const result = await service.searchProducts('');
+      expect(result).toEqual({ matches: [], related: [], hasExactMatch: false });
+      expect(listCalled).toBe(false);
+
+      repository.list = listSpy;
+    });
+
+    it('related results never include a product outside the active filters', async () => {
+      const { catSnacks, catCleaning, locShelfA } = await makeClassifications();
+
+      // Closest fuzzy match, inside the filter.
+      await service.createProduct({
+        name: 'Parle-G Biscuit', categoryId: catSnacks.id, locationIds: [locShelfA.id]
+      });
+      // Would be "related" by shared category if filters were ignored --
+      // but it's in a DIFFERENT category, so under the active filter it's
+      // never even a candidate.
+      await service.createProduct({
+        name: 'Detergent', categoryId: catCleaning.id, locationIds: [locShelfA.id]
+      });
+      // Shares category with the match, but OUTSIDE the location filter --
+      // must not appear in related.
+      await service.createProduct({
+        name: 'Good Day', categoryId: catSnacks.id, locationIds: []
+      });
+
+      const result = await service.searchProducts('parleg', {
+        categoryId: catSnacks.id,
+        locationIds: [locShelfA.id]
+      });
+
+      const relatedNames = result.related.map((p) => p.name);
+      expect(relatedNames).not.toContain('Detergent');
+      expect(relatedNames).not.toContain('Good Day');
+    });
+
+    it('archived products remain excluded regardless of filter state', async () => {
+      const { catSnacks } = await makeClassifications();
+      const { product } = await service.createProduct({ name: 'Discontinued', categoryId: catSnacks.id });
+      await service.updateProduct(product, { archived: true });
+
+      const result = await service.searchProducts('', { categoryId: catSnacks.id });
+      expect(result.matches.map((p) => p.id)).not.toContain(product.id);
+    });
+  });
 });

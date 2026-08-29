@@ -15,6 +15,9 @@
 //     classification ID references to display names, building a TRANSIENT
 //     in-memory search projection, and delegating to the pure domain
 //     search function
+//   - (Phase 4C) applying ID-based category/location/tag filters to the
+//     active product list BEFORE the searchable projection is built and
+//     before the domain search function runs -- see applyFilters()
 //
 // Does NOT:
 //   - import Dexie or create its own database (receives already-built
@@ -199,8 +202,57 @@ export function createProductService(productRepository, classificationRepository
   }
 
   // ---------------------------------------------------------------------------
-  // searchProducts (Phase 4A)
+  // searchProducts (Phase 4A/4B/4C)
   // ---------------------------------------------------------------------------
+
+  /**
+   * Apply ID-based classification filters to the active product list,
+   * BEFORE the searchable projection is built and before Fuse ever runs
+   * (Phase 4C approved contract). Filtering on Product's own
+   * categoryId/locationIds/tagIds is deliberately preferred over filtering
+   * on resolved display names -- it is immune to renames and to a
+   * collision between an active and an archived classification sharing a
+   * name.
+   *
+   * Semantics (locked, Phase 4C):
+   *   - categoryId: single-select. A product matches only if its own
+   *     categoryId === filters.categoryId.
+   *   - locationIds: multi-select, OR within the group. A product matches
+   *     if it has AT LEAST ONE of the selected location ids.
+   *   - tagIds: multi-select, OR within the group. Same pattern as
+   *     locationIds.
+   *   - Across groups: AND. All three checks above must independently
+   *     pass (an inactive/empty group is always considered passing --
+   *     it imposes no constraint).
+   *
+   * @param {object[]} products
+   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[] }} filters
+   * @returns {object[]}
+   */
+  function applyFilters(products, filters) {
+    const { categoryId = null, locationIds = [], tagIds = [] } = filters;
+
+    const hasCategoryFilter = Boolean(categoryId);
+    const hasLocationFilter = locationIds.length > 0;
+    const hasTagFilter = tagIds.length > 0;
+
+    if (!hasCategoryFilter && !hasLocationFilter && !hasTagFilter) {
+      return products;
+    }
+
+    return products.filter((product) => {
+      if (hasCategoryFilter && product.categoryId !== categoryId) {
+        return false;
+      }
+      if (hasLocationFilter && !(product.locationIds || []).some((id) => locationIds.includes(id))) {
+        return false;
+      }
+      if (hasTagFilter && !(product.tagIds || []).some((id) => tagIds.includes(id))) {
+        return false;
+      }
+      return true;
+    });
+  }
 
   /**
    * Build an id -> name lookup map for one classification entity type,
@@ -260,25 +312,49 @@ export function createProductService(productRepository, classificationRepository
   }
 
   /**
-   * Fuzzy + exact product search.
+   * Fuzzy + exact product search, with optional classification filters
+   * (Phase 4C).
    *
    * Per the approved Phase 4A contract: does not call the domain search
-   * function for an empty/whitespace-only query -- returns the same empty
-   * shape immediately, without loading products or classification data at
-   * all (no repository calls for an empty query).
+   * function for an empty/whitespace-only query with no active filters --
+   * returns the same empty shape immediately, without loading products or
+   * classification data at all (no repository calls at all in that case).
+   *
+   * Phase 4C addition: an empty query WITH active filters is a valid,
+   * distinct case -- "filters only." Filters are always applied to the
+   * active product list first (Phase 4C approved pipeline), regardless of
+   * whether a text query follows. When the query is empty, Fuse is never
+   * invoked and the filtered product list becomes `matches` directly;
+   * `related` stays [] and `hasExactMatch` stays false -- the SAME public
+   * result shape as a normal search, not a second shape the caller must
+   * branch on.
    *
    * Archived products are excluded (same default as listProducts()/
-   * productRepository.list()).
+   * productRepository.list()), independent of filter state.
    *
    * @param {string} query
+   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[] }} [filters]
    * @returns {Promise<{ matches: object[], related: object[], hasExactMatch: boolean }>}
    */
-  async function searchProductsUseCase(query) {
-    if (isEmptyQuery(query)) {
+  async function searchProductsUseCase(query, filters = {}) {
+    const queryIsEmpty = isEmptyQuery(query);
+    const hasActiveFilters = Boolean(
+      filters.categoryId || (filters.locationIds && filters.locationIds.length > 0) || (filters.tagIds && filters.tagIds.length > 0)
+    );
+
+    if (queryIsEmpty && !hasActiveFilters) {
       return { matches: [], related: [], hasExactMatch: false };
     }
 
-    const products = await productRepository.list({ includeArchived: false });
+    const allActiveProducts = await productRepository.list({ includeArchived: false });
+    const filteredProducts = applyFilters(allActiveProducts, filters);
+
+    if (queryIsEmpty) {
+      // Filters-only: Fuse is never invoked, but the public result
+      // contract stays identical to a normal search result (Phase 4C
+      // locked decision -- no second shape for callers to branch on).
+      return { matches: filteredProducts, related: [], hasExactMatch: false };
+    }
 
     const [categoryNames, locationNames, tagNames] = await Promise.all([
       buildNameMap('category'),
@@ -286,7 +362,7 @@ export function createProductService(productRepository, classificationRepository
       buildNameMap('tag')
     ]);
 
-    const searchableProducts = products.map((product) =>
+    const searchableProducts = filteredProducts.map((product) =>
       toSearchableProduct(product, categoryNames, locationNames, tagNames)
     );
 
