@@ -4,6 +4,7 @@ import { useAppContext } from '../contexts/AppContext.jsx';
 import { classifyStockStatus, needsAttention } from '../domain/classification/lowStock.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 import { useDebouncedValue } from '../hooks/useDebouncedValue.js';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition.js';
 
 const SEARCH_DEBOUNCE_MS = 450;
 
@@ -40,7 +41,13 @@ const SEARCH_DEBOUNCE_MS = 450;
  * the query/filter effect below -- selecting a filter must never
  * re-trigger a classification-options reload (Phase 4C locked contract).
  *
- * Voice search (Phase 4D) is not implemented yet.
+ * Voice search (Phase 4D): an input adapter only -- a microphone button
+ * beside the search field, present only when the browser supports the
+ * Web Speech API. On a final transcript, it calls the SAME setQuery()
+ * the text input already uses; nothing about debouncing, filters, or the
+ * search pipeline is aware voice input exists. Absent entirely (not
+ * disabled) when unsupported, so text search remains the only, fully
+ * functional path on unsupported browsers/devices.
  */
 export default function ProductListPage() {
   const { productService, classificationRepository } = useAppContext();
@@ -52,6 +59,17 @@ export default function ProductListPage() {
 
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+
+  // Voice search (Phase 4D) -- input adapter only. A final transcript
+  // simply calls the same setQuery() the text input uses; the existing
+  // debounce/search pipeline below is entirely unaware voice exists.
+  const {
+    isSupported: isVoiceSupported,
+    isListening: isVoiceListening,
+    error: voiceError,
+    start: startVoiceSearch,
+    stop: stopVoiceSearch
+  } = useSpeechRecognition(setQuery);
 
   // Filter state -- mirrors Product's own field shapes directly
   // (categoryId singular, locationIds/tagIds arrays), per the Phase 4C
@@ -229,6 +247,17 @@ export default function ProductListPage() {
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search products…"
       />
+      {isVoiceSupported && (
+        <button
+          type="button"
+          aria-label="Search by voice"
+          aria-pressed={isVoiceListening}
+          onClick={isVoiceListening ? stopVoiceSearch : startVoiceSearch}
+        >
+          {isVoiceListening ? '🎤 Listening…' : '🎤'}
+        </button>
+      )}
+      {voiceError && <p role="alert">{voiceError}</p>}
 
       {filterOptionsError && <p role="alert">{filterOptionsError}</p>}
 

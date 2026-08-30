@@ -3,6 +3,13 @@
 This document is the technical companion to `PRD.md` and `BUILD_BRIEF.md`. It
 records the concrete decisions made while translating the spec into code, and
 the assumptions made where the spec was silent.
+Note on phase numbering: this document's and `PROGRESS.md`'s phase
+numbers reflect how the project actually sequenced (Phase 4 = Search),
+which diverges from `BUILD_BRIEF.md` §39's original suggested sequence
+(where Search is listed as Phase 5, Synchronization as Phase 6). The two
+numbering schemes are not meant to be cross-referenced 1:1 — treat
+`PROGRESS.md`'s phase list as authoritative for "what's actually been
+built and in what order."
 
 ## Layering (frontend)
 
@@ -375,6 +382,56 @@ accounting — just "what have I generally been paying," per PRD §17. If a
 future requirement needs real inventory accounting, that's a distinct
 feature, not an extension of this calculation.
 
+## Search, related results, filters, and voice input (Phase 4)
+
+These four sub-phases share one governing rule, established in 4A and
+never broken across 4B/4C/4D: **`frontend/src/domain/search/
+productSearch.js` is the only place fuzzy-matching logic lives, and it
+stays browser/React/Dexie-independent.** Everything added in 4B/4C/4D was
+designed specifically to avoid needing a second Fuse instance, a second
+search pipeline, or any change to that file's public contract unless the
+matching semantics themselves were what changed (only true for 4B).
+
+### Related results are an aggregate pool, not per-candidate scoring
+
+4B's relatedness model derives one shared metadata pool — categories,
+tags, and locations unioned across ALL of `matches` together — rather
+than scoring each candidate against its single closest match. This was
+an explicit, deliberate rejection of the more "sophisticated"-sounding
+per-candidate approach: it keeps the ranking fully deterministic (no
+Fuse scores involved), keeps the whole related-results computation inside
+one pure function (`deriveRelated()`), and avoids building anything that
+could be mistaken for a recommendation engine. Ranking is a strict
+four-tier ordinal comparison — shared category (boolean) → shared-tag
+count → shared-location count → stable original order — never a weighted
+numeric formula.
+
+### Filters apply to `Product[]`, upstream of the searchable projection
+
+4C's classification filters (category/location/tag) are applied to the
+raw, ID-bearing `Product[]` list — comparing `product.categoryId`/
+`locationIds`/`tagIds` directly — **before** `productService.js` builds
+the transient `SearchableProduct` projection and before Fuse ever runs.
+This was chosen over filtering resolved display names (fragile against
+renames and archived/active name collisions) and over filtering `matches`
+after the fact (would desynchronize `hasExactMatch` from what the UI
+shows, and would need `deriveRelated()`'s aggregate pool re-derived from
+a since-filtered set). Because filters shrink the candidate array itself,
+related results are automatically filter-consistent as a structural
+consequence — not a second filtering pass bolted onto `deriveRelated()`.
+
+### Voice search is an input adapter, not a second search path
+
+4D's `frontend/src/hooks/useSpeechRecognition.js` is the one place in the
+codebase that touches the Web Speech API directly — the same "one place
+owns this browser concern" pattern already used for Dexie
+(`data/db/schema.js`). It has no knowledge of search, filters, or the
+product domain at all: it exposes a final, trimmed transcript, and
+`ProductListPage.jsx` feeds that transcript into the exact same
+`setQuery()` the text input already calls. There is deliberately no
+separate voice-query state, no separate debounce path, and no
+voice-aware branch anywhere in `productService.js` or `productSearch.js`.
+
 ## IndexedDB schema (Dexie)
 
 ```js
@@ -647,6 +704,19 @@ default; revisit any of them at any time:
    reference URL is stored server-side once uploaded. The specific provider
    is an implementation detail behind the interface, not an architectural
    commitment.
+4. **Multi-select tag filters combine as OR within the group** (any
+   selected tag matches), mirroring the same OR-within-group treatment
+   used for multi-select location filters. The PRD's own filter example
+   (§25) only ever shows one tag selected at a time, so there's no direct
+   textual basis either way — this was reasoned by consistency with
+   locations rather than cited directly, and is the one Phase 4C
+   semantic decision without a PRD citation behind it.
+5. **Voice search uses `continuous: false` and `interimResults: false`**
+   — single-utterance recognition, final transcript only. The PRD's
+   sketch (`🔍 Search` / `🎤`) doesn't specify either behavior; this was
+   read as the simplest interpretation of "voice input should populate
+   the normal search field" as one discrete action, rather than a
+   live-transcription UX the spec never describes.
 
 ## Phase 0.5 — architecture correction log
 

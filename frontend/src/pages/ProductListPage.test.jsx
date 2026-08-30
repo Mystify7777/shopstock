@@ -28,6 +28,36 @@ function makeMockClassificationRepository(overrides = {}) {
   };
 }
 
+// Minimal fake SpeechRecognition constructor, matching the one used in
+// useSpeechRecognition.test.js -- these UI tests exercise the mic
+// button's integration with the existing search flow, not the hook's own
+// internals (already covered there).
+function makeFakeRecognitionCtor() {
+  const instances = [];
+
+  function FakeSpeechRecognition() {
+    this.onstart = null;
+    this.onresult = null;
+    this.onerror = null;
+    this.onend = null;
+    this.stop = vi.fn();
+    this.abort = vi.fn();
+    this.start = vi.fn(() => {
+      this.onstart?.();
+    });
+    instances.push(this);
+  }
+
+  FakeSpeechRecognition.instances = instances;
+  return FakeSpeechRecognition;
+}
+
+function installFakeSpeechRecognition() {
+  const Ctor = makeFakeRecognitionCtor();
+  window.SpeechRecognition = Ctor;
+  return Ctor;
+}
+
 // Small helper: renders ProductListPage under real routes so navigation can
 // be observed via a visible current-path indicator, without pulling in the
 // real ProductFormPage.
@@ -60,6 +90,8 @@ describe('ProductListPage', () => {
   // corrective pass already fixed once in useDebouncedValue.test.js).
   afterEach(() => {
     vi.useRealTimers();
+    delete window.SpeechRecognition;
+    delete window.webkitSpeechRecognition;
   });
 
   it('shows a loading state before products resolve', () => {
@@ -652,6 +684,125 @@ describe('ProductListPage', () => {
         });
 
         expect(classificationRepository.list.mock.calls.length).toBe(callsAfterMount);
+      });
+    });
+
+    describe('voice search (Phase 4D)', () => {
+      it('mic button is not rendered when speech recognition is unsupported', async () => {
+        const productService = makeMockService();
+        renderWithRoutes(productService);
+        await waitFor(() => screen.getByText(/no products yet/i));
+
+        expect(screen.queryByLabelText(/search by voice/i)).not.toBeInTheDocument();
+      });
+
+      it('mic button is rendered when speech recognition is supported', async () => {
+        installFakeSpeechRecognition();
+        const productService = makeMockService();
+        renderWithRoutes(productService);
+        await waitFor(() => screen.getByText(/no products yet/i));
+
+        expect(screen.getByLabelText(/search by voice/i)).toBeInTheDocument();
+      });
+
+      it('a final transcript populates the existing search input', async () => {
+        const Ctor = installFakeSpeechRecognition();
+        const productService = makeMockService();
+        renderWithRoutes(productService);
+        await waitFor(() => screen.getByText(/no products yet/i));
+
+        fireEvent.click(screen.getByLabelText(/search by voice/i));
+        const instance = Ctor.instances[0];
+        instance.onresult({ results: [[{ transcript: 'Parle-G' }]] });
+
+        await waitFor(() => {
+          expect(document.getElementById('product-search')).toHaveValue('Parle-G');
+        });
+      });
+
+      it('a voice transcript flows through the existing debounced search path', async () => {
+        const Ctor = installFakeSpeechRecognition();
+        const productService = makeMockService({
+          searchProducts: vi.fn().mockResolvedValue({
+            matches: [{ id: 'p1', name: 'Parle-G', quantity: 10 }],
+            related: [],
+            hasExactMatch: false
+          })
+        });
+        renderWithRoutes(productService);
+        await waitFor(() => screen.getByText(/no products yet/i));
+
+        fireEvent.click(screen.getByLabelText(/search by voice/i));
+        const instance = Ctor.instances[0];
+        instance.onresult({ results: [[{ transcript: 'parleg' }]] });
+
+        await waitFor(() => {
+          expect(productService.searchProducts).toHaveBeenCalledWith(
+            'parleg',
+            expect.objectContaining({ categoryId: null, locationIds: [], tagIds: [] })
+          );
+        });
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+      });
+
+      it('filters remain intact when voice updates the query', async () => {
+        const Ctor = installFakeSpeechRecognition();
+        const productService = makeMockService({
+          searchProducts: vi.fn().mockResolvedValue({
+            matches: [{ id: 'p1', name: 'Chips', quantity: 10 }],
+            related: [],
+            hasExactMatch: false
+          })
+        });
+        const classificationRepository = makeMockClassificationRepository({
+          list: vi.fn((entityType) =>
+            entityType === 'category'
+              ? Promise.resolve([{ id: 'cat-snacks', name: 'Snacks' }])
+              : Promise.resolve([])
+          )
+        });
+        renderWithRoutes(productService, classificationRepository);
+        await waitFor(() => screen.getByText(/no products yet/i));
+        await screen.findByText('Snacks');
+
+        fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'cat-snacks' } });
+
+        fireEvent.click(screen.getByLabelText(/search by voice/i));
+        const instance = Ctor.instances[0];
+        instance.onresult({ results: [[{ transcript: 'chips' }]] });
+
+        await waitFor(() => {
+          expect(productService.searchProducts).toHaveBeenCalledWith(
+            'chips',
+            expect.objectContaining({ categoryId: 'cat-snacks' })
+          );
+        });
+      });
+
+      it('a voice error renders without breaking typed search', async () => {
+        const Ctor = installFakeSpeechRecognition();
+        const productService = makeMockService({
+          searchProducts: vi.fn().mockResolvedValue({
+            matches: [{ id: 'p1', name: 'Parle-G', quantity: 10 }],
+            related: [],
+            hasExactMatch: false
+          })
+        });
+        renderWithRoutes(productService);
+        await waitFor(() => screen.getByText(/no products yet/i));
+
+        fireEvent.click(screen.getByLabelText(/search by voice/i));
+        const instance = Ctor.instances[0];
+        instance.onerror({ error: 'no-speech' });
+
+        expect(await screen.findByText(/Couldn't hear anything/i)).toBeInTheDocument();
+
+        // Typed search still works normally after a voice error.
+        fireEvent.change(document.getElementById('product-search'), { target: { value: 'parleg' } });
+        await waitFor(() => {
+          expect(productService.searchProducts).toHaveBeenCalled();
+        });
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
       });
     });
   });

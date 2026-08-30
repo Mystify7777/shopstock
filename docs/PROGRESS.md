@@ -803,7 +803,122 @@ hand-constructed stale value, which the corrected name now states).
 
 Full suite at Phase 3 close: **21 test files, 567 tests, 0 failures.**
 
-## Phase 4 — Search — NOT STARTED
+## Phase 4 — Search — ✅ COMPLETE (4A/4B/4C/4D)
+
+### 4A — Core Search
+
+- [x] `frontend/src/domain/search/productSearch.js` (new) — pure domain
+      module, no React/Dexie/browser imports. Exports `searchProducts()`
+      and `isEmptyQuery()`. `SearchableProduct` shape (built by the
+      service, never the domain): `{ product, name, notes, category,
+      tags[], locations[] }` — transient, never persisted.
+      Exact-match detection: deterministic normalized-string equality
+      (trim/collapse whitespace/lowercase) across all five searchable
+      fields including `notes`. Fuzzy matching: Fuse.js, weighted keys
+      `{ name: 3, category: 2, tags: 2, locations: 2, notes: 1 }`,
+      `ignoreLocation: true`.
+- [x] `frontend/src/services/productService.js` — `searchProducts(query)`
+      added: empty/whitespace query short-circuits with no repository
+      calls; resolves `categoryId`/`locationIds[]`/`tagIds[]` to display
+      names via `classificationRepository.list(type, { includeArchived:
+      true })`; dangling references resolve to empty/omitted rather than
+      throwing. `classificationRepository` made a **required** constructor
+      dependency (`TypeError` if missing — no compatibility fallback).
+- [x] `frontend/src/hooks/useDebouncedValue.js` (new) — generic debounce
+      hook, not search-specific.
+- [x] `frontend/src/pages/ProductListPage.jsx` — search input, debounced
+      ~450ms, falls back to the pre-existing `listProducts()` flow
+      unchanged when the query is empty.
+
+Corrective pass (caught in review before checkpoint): exact-match
+detection extended to include `notes` (an earlier draft excluded it —
+wrong, since exactness and relevance-weighting are separate concerns);
+removed unused `includeScore: true`; corrected the `ignoreLocation`
+comment; added a dangling-location-reference test; fixed a fake-timer
+cleanup leak in `useDebouncedValue.test.js` (now uses `afterEach`); added
+a 449ms/450ms debounce boundary test.
+
+### 4B — Related Results
+
+- [x] `frontend/src/domain/search/productSearch.js` — added
+      `deriveRelated()` / `buildRelatedMetadataPool()` /
+      `countSharedValues()`. Relatedness is an **aggregate** metadata pool
+      (category/tags/locations unioned across ALL of `matches`), not a
+      per-candidate similarity score. Deterministic four-tier ranking:
+      shared category (boolean priority) → shared-tag count →
+      shared-location count → stable original order. `matches`/`related`
+      fully disjoint. `hasExactMatch === true` or `matches.length === 0`
+      → `related = []`.
+- [x] `frontend/src/pages/ProductListPage.jsx` — "Related products"
+      section, shown only when `!hasExactMatch && related.length > 0`,
+      reusing the existing row renderer (navigation/low-stock identical).
+- No second Fuse instance introduced. `productService.js` genuinely
+  unchanged this phase — no service tests added, per contract.
+
+### 4C — Search Filters
+
+- [x] `frontend/src/services/productService.js` — added `applyFilters()`:
+      ID-based (not name-based) filtering against `Product.categoryId`
+      (single-select) / `locationIds` / `tagIds` (multi-select, OR within
+      a group, AND across groups). Filters are applied to the active
+      product list **before** the searchable projection is built and
+      before Fuse runs — `productSearch.js` needed zero changes.
+      `searchProductsUseCase(query, filters = {})` extended with a
+      filters-only bypass (empty query + active filters) that returns the
+      **same** `{ matches, related, hasExactMatch }` shape rather than a
+      second result contract.
+- [x] `frontend/src/pages/ProductListPage.jsx` — native `<select>`
+      (category) + checkboxes (locations/tags) inside a `<fieldset>`,
+      "Clear filters" button. Filter *options* load once on mount from
+      `classificationRepository.list()` (defaults to
+      `includeArchived: false` — no special-casing needed); selecting a
+      filter never re-triggers that load (dedicated regression test).
+- [x] `frontend/src/contexts/AppContext.jsx` / `frontend/src/main.jsx` —
+      `classificationRepository` added to the `AppProvider` services
+      shape so the page can read filter options.
+- Because filters narrow the candidate set upstream of `matches`, related
+  results are automatically filter-consistent too — no second filtering
+  pass, confirmed by a dedicated test (a same-category product outside an
+  active location filter never appears in `related`).
+- `productSearch.js` confirmed byte-identical to its Phase 4B checkpoint
+  throughout this phase.
+
+Corrective note (self-caught, not a design defect): an incorrect test
+assertion for the new `searchProducts(query, filters)` signature threw
+before a pre-existing fake-timer test's own `vi.useRealTimers()` cleanup
+ran, leaking fake timers into 18 subsequent tests in
+`ProductListPage.test.jsx` and hanging their `waitFor()` calls — the same
+class of bug the 4A corrective pass had already fixed once in
+`useDebouncedValue.test.js`, but this file had never received the
+equivalent guard. Fixed the assertion and added a file-level
+`afterEach(() => vi.useRealTimers())` safety net.
+
+### 4D — Voice Search
+
+- [x] `frontend/src/hooks/useSpeechRecognition.js` (new) — the one place
+      in the codebase that touches the Web Speech API directly. Owns
+      capability detection (`window.SpeechRecognition ||
+      window.webkitSpeechRecognition`), a strict `idle → listening →
+      (idle | error)` lifecycle, single-utterance recognition
+      (`continuous: false`, `interimResults: false`), human-readable error
+      mapping (never raw browser error codes), user-stop vs.
+      recognition-error disambiguation, and unmount cleanup via
+      `abort()`.
+- [x] `frontend/src/pages/ProductListPage.jsx` — mic button rendered only
+      when `isSupported`; a final transcript calls the **same**
+      `setQuery()` the text input uses — no parallel voice-query state,
+      no second search pipeline. Absent entirely (not disabled) on
+      unsupported browsers.
+- Voice search is a pure input adapter: `productSearch.js` and
+  `productService.js` both confirmed byte-identical to their prior
+  checkpoints throughout this phase.
+- New files use LF line endings (the project's documented target),
+  diverging intentionally from the legacy CRLF convention still present
+  elsewhere in the repo (flagged explicitly, not silently resolved either
+  way).
+
+Full suite at Phase 4 close: **24 test files, 689 tests, 0 failures.**
+
 ## Phase 5 — Backend (Express + MongoDB + auth) — NOT STARTED
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
