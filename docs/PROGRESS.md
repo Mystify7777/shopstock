@@ -919,7 +919,132 @@ equivalent guard. Fixed the assertion and added a file-level
 
 Full suite at Phase 4 close: **24 test files, 689 tests, 0 failures.**
 
-## Phase 5 — Backend (Express + MongoDB + auth) — NOT STARTED
+## Phase 5 — Backend (Express + MongoDB + auth) — IN PROGRESS
+
+### 5A — Backend Foundation ✅ COMPLETE
+
+Files:
+- `backend/src/config/env.js` (new) — required-variable presence
+  validation (`validateEnv()`) + typed config loading (`loadConfig()`).
+  Fails loud (`process.exit(1)`) at startup if any of `MONGODB_URI`,
+  `JWT_ACCESS_SECRET`, `JWT_ACCESS_EXPIRES_IN`,
+  `REFRESH_TOKEN_EXPIRES_IN_DAYS`, `SEED_USERNAME`, `SEED_PASSWORD`,
+  `CORS_ORIGIN` is missing or blank, rather than discovering a missing
+  secret on the first request that needs it.
+- `backend/src/config/db.js` (new) — Mongoose connection lifecycle
+  (`connectDb`, `disconnectDb`, `connectionState`). Does not itself
+  enforce replica-set topology — that failure surfaces later, at the
+  first stock-event transaction attempt (Phase 5E) — but the requirement
+  is documented explicitly in `backend/README.md`. **Bug found and fixed
+  during this slice, via actually running the code, not just reading
+  it:** an unreachable `MONGODB_URI` hung for 25+ seconds with no error
+  surfaced at all (Mongoose's own default `serverSelectionTimeoutMS` is
+  30s, and observed behavior exceeded even that in this environment) —
+  directly contradicting this phase's "fail loud at startup" principle.
+  Fixed by explicitly setting `serverSelectionTimeoutMS: 10000` (default,
+  overridable) in `connectDb()`; re-verified `server.js` now exits(1)
+  with a clear message in ~10s against a genuinely unreachable host.
+- `backend/src/middleware/AppError.js` (new) — the locked nine-code error
+  vocabulary (`VALIDATION_ERROR`, `UNAUTHORIZED`, `FORBIDDEN`,
+  `NOT_FOUND`, `CONFLICT`, `QUANTITY_CONSISTENCY_CONFLICT`,
+  `ALREADY_REVERSED`, `DUPLICATE_ENTITY`, `INTERNAL_ERROR`) as a frozen
+  object + an `AppError` class that throws if constructed with a code
+  outside that set.
+- `backend/src/middleware/errorHandler.js` (new) — centralized Express
+  error middleware producing the single `{ error: { code, message } }`
+  response shape on every endpoint. Non-`AppError` exceptions are logged
+  server-side in full but reported to the client as a generic
+  `INTERNAL_ERROR` — the real exception text/stack is never sent in a
+  response body.
+- `backend/src/app.js` (new) — Express app assembly (`createApp()`),
+  deliberately separate from `server.js` so tests can exercise real
+  routes/middleware via `supertest` without binding a port or requiring
+  a live MongoDB connection. Includes `GET /api/health` (no auth;
+  reports HTTP-server-up and Mongo-connection-state as two separate
+  facts, never collapsed into one boolean, so a disconnected DB doesn't
+  itself fail the health check).
+- `backend/server.js` (rewritten) — real boot entrypoint: load/validate
+  env → connect to MongoDB → build the app → listen. Domain routers are
+  not mounted yet (added incrementally from 5B onward).
+- `backend/tests/config/env.test.js`, `tests/config/db.test.js`,
+  `tests/middleware/AppError.test.js`, `tests/app.test.js` (new) — 25
+  tests total, all Mongo-free (or Mongo-connection-failure-only, which
+  needs no real MongoDB instance), all **genuinely executed** in this
+  session via `node --test`.
+- `backend/tests/helpers/testDb.js` (new) — shared `MongoMemoryReplSet`
+  connect/clear/disconnect helper for every Mongo-dependent test from
+  Phase 5C onward. **Written but not yet executed successfully** — see
+  the sandbox note below.
+- `backend/README.md` (new) — documents the MongoDB replica-set
+  requirement for local dev (transactions cannot run against a
+  standalone `mongod`), the Atlas production target, and the test
+  strategy.
+- `backend/package.json` — added `mongodb-memory-server` and `supertest`
+  as dev dependencies. **Fixed a genuine pre-existing defect**: the
+  declared `"test": "node --test tests/"` script fails outright
+  (`MODULE_NOT_FOUND`) on this Node version when given a bare directory
+  path — reproduced and confirmed before changing it. Fixed to
+  `"test": "node --test"` (Node's own documented default recursive
+  discovery), verified working.
+
+**Sandbox network limitation (flagged explicitly, not silently routed
+around):** this development sandbox's outbound network allowlist does
+not include `fastdl.mongodb.org`, which `mongodb-memory-server` needs to
+download its MongoDB binary. Confirmed via a direct smoke test
+(`DownloadError`, HTTP 403) before writing any Mongo-dependent code, and
+confirmed again against the actual `tests/helpers/testDb.js` module.
+**Every test written in this Phase 5A slice that requires a MongoDB
+connection has NOT been executed in this session** — only the tests that
+need no real MongoDB instance (env validation, database-connection-
+failure behavior, AppError, app.js/health/error-handling/CORS via
+supertest) have a genuine, verified pass in this environment.
+Anything from Phase 5C onward that needs `MongoMemoryReplSet` must be run
+for real (locally, or in an environment with the necessary network
+access) before its completion gate can be honestly claimed as passing —
+this is a standing caveat for the rest of Phase 5, not just this slice.
+
+Test count this slice: **37/37 passing (no real MongoDB instance
+required)**; backend total test files: 4 (`env.test.js`, `db.test.js`,
+`AppError.test.js`, `app.test.js`) + 1 unexecuted helper module
+(`testDb.js`, no test file of its own yet — it's consumed by future test
+files, not tested standalone).
+
+#### 5A corrective pass (post-review)
+
+Three issues raised in review, all addressed:
+
+1. **Real bug fixed:** `AppError`'s vocabulary check used `code in
+   ERROR_CODES`, which follows the prototype chain — `new
+   AppError('toString', ...)` incorrectly passed validation (since
+   `'toString' in {}` is `true` via `Object.prototype`), later producing
+   `status: undefined`. Fixed to `Object.hasOwn(ERROR_CODES, code)` (an
+   own-property check). Verified the fix is meaningful, not decorative,
+   by confirming the new regression test genuinely fails against the old
+   `in`-based code before the fix and passes after it.
+2. **Validation gap closed:** `validateEnv()` previously only checked
+   *presence* for `REFRESH_TOKEN_EXPIRES_IN_DAYS`/`PORT`, so values like
+   `banana`, `0`, or `-90` passed validation and silently became `NaN`
+   or an invalid value downstream. `validateEnv()` now also validates
+   `REFRESH_TOKEN_EXPIRES_IN_DAYS` as finite + positive, and `PORT` (when
+   present — it remains optional) as a finite positive integer, returning
+   a new `invalid: string[]` array alongside `missing: string[]`.
+   `loadConfig()`'s failure message now reports both missing and invalid
+   variables together.
+3. **Documentation inconsistency corrected:** this section previously
+   stated "23 Mongo-free tests" in one place and "25/25 passing" in
+   another — a genuine contradiction, not just a stale number. Both are
+   now correctly reconciled to **37**, the true post-corrective-pass
+   count.
+
+Corrective-pass diff scope: `src/middleware/AppError.js`,
+`src/config/env.js`, `tests/middleware/AppError.test.js`,
+`tests/config/env.test.js`, this `PROGRESS.md` section. **No other
+Phase 5A file changed. No frontend file changed. No Phase 5B work
+started.** Full backend suite re-run: 37/37 passing. Frontend suite
+re-run: 689/689 passing, unaffected. `MongoMemoryReplSet`
+sandbox-network caveat is unchanged and still applies.
+### 5B–5G — NOT STARTED
+
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED

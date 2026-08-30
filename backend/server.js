@@ -1,12 +1,30 @@
-// Phase-0 scaffold placeholder.
-//
-// Will bootstrap: dotenv config, MongoDB connection (src/config/db.js),
-// the Express app (src/app.js), and start listening. Left minimal until
-// Phase 5 (backend + auth) per docs/PROGRESS.md.
+// Real boot entrypoint (Phase 5A). Loads/validates env, connects to
+// MongoDB, builds the Express app, and starts listening. This is the ONLY
+// module that performs these three side effects together -- app.js stays
+// importable by tests without any of them.
 
 import 'dotenv/config';
+import { loadConfig } from './src/config/env.js';
+import { connectDb } from './src/config/db.js';
+import { createApp } from './src/app.js';
 
-const PORT = process.env.PORT || 4000;
+const config = loadConfig(); // exits the process on missing required vars
 
-console.log('[ShopStock backend] Scaffold only — app.js not yet implemented.');
-console.log(`[ShopStock backend] Will listen on port ${PORT} once Phase 5 lands.`);
+async function start() {
+  try {
+    await connectDb(config.mongodbUri);
+    console.log('[ShopStock backend] MongoDB connected.');
+  } catch (err) {
+    console.error('[ShopStock backend] Failed to connect to MongoDB:', err.message);
+    process.exit(1);
+  }
+
+  const app = createApp({ corsOrigin: config.corsOrigin });
+
+  app.listen(config.port, () => {
+    console.log(`[ShopStock backend] Listening on port ${config.port} (${config.nodeEnv}).`);
+  });
+}
+
+start();
+
