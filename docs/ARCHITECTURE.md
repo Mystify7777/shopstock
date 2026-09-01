@@ -557,8 +557,48 @@ safe as a document key for entities that can be upserted more than once.
   which record is authoritative — this is the one exception to "events are
   never mutated," and it's narrowly scoped to this single boolean flag.
 - `categories` / `locations` / `tags` / `units` — upserted by `entityId`,
-  for the same reason as `products` above.
+  for the same reason as `products` above. Implemented in Phase 5C via one
+  shared schema factory (`classificationModel.js`) producing four separate
+  models/collections with the identical shape (`_id`/`ownerId`/`name`/
+  `archived`/`isDefault`/`updatedAt`), rather than four duplicated schemas
+  or one polymorphic collection with a `type` discriminator.
 - `users` — single document in v1, holds bcrypt hash + refresh token records.
+
+### Ownership-scoped upsert safety (binding pattern, established Phase 5C)
+
+Any entity that is (a) upserted by a client-generated `entityId` and (b)
+scoped to an owner must guard against a specific failure mode: an update
+filter that matches on `_id` alone (ignoring `ownerId`) would let one
+owner silently overwrite another owner's document simply by submitting
+that document's `entityId`.
+
+**The fix:** the update filter must match on `{ _id: entityId, ownerId }`
+together, never `_id` alone. If `entityId` already exists under a
+*different* owner, this filter matches nothing — so Mongo's upsert
+attempts an **insert** with that `_id`, which collides with the existing
+document and throws a duplicate-key error (Mongo code `11000`) rather than
+silently overwriting or silently no-oping. The service layer catches that
+specific error and translates it into an explicit `CONFLICT` (409)
+response — never a generic 500, never a silent success.
+
+This is not specific to classifications. **The same pattern is binding for
+`products` in Phase 5D and any other client-generated-`entityId` +
+ownership-scoped collection added later.**
+
+### URL-vs-body identity rule (binding pattern, established Phase 5C)
+
+For any `PUT /:id` upsert endpoint, the persisted `_id` always comes from
+the URL parameter, never from the request body. If the body includes an
+`id` field:
+
+- absent → allowed, no `id` required in the body
+- matches the URL `id` → allowed
+- disagrees with the URL `id` → rejected with `VALIDATION_ERROR`
+
+Silently ignoring a mismatched body `id` was considered and rejected: it
+would mask a real client or sync bug rather than surfacing it. This rule
+applies to any future `PUT /:id`-style upsert endpoint (Product, Phase 5D)
+for the same reason.
 
 ## Sync model
 

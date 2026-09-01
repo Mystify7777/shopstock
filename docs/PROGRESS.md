@@ -1298,7 +1298,130 @@ complete current file set for any directory touched, not an
 incremental-changes-only list**, to avoid this class of gap recurring in
 Phase 5C.
 
-### 5C–5G — NOT STARTED
+### 5C — Classification Persistence — ✅ COMPLETE AND FULLY VERIFIED
+
+Implements server-side CRUD + archive for `Category`/`Location`/`Tag`/`Unit`,
+per the authorized Phase 5C contract (four explicit public resource paths,
+shared internal model/service/controller/router infrastructure, no
+`/api/classifications/:type` generic endpoint).
+
+**Files added:**
+- `src/models/classificationModel.js` — one schema factory producing four
+  separate Mongoose models/collections (`Category`/`categories`,
+  `Location`/`locations`, `Tag`/`tags`, `Unit`/`units`), all sharing the
+  identical persisted shape (`_id: String`, `ownerId`, `name`, `archived`,
+  `isDefault`, `updatedAt`) and the `{ ownerId: 1, archived: 1 }` index.
+- `src/services/classificationService.js` — the real logic, shared across
+  all four resources via one factory bound to a model. Owns: ownership
+  scoping on every query/write; the locked URL-vs-body `id` identity rule
+  (body `id` absent or matching the URL → allowed; mismatched → rejected
+  with `VALIDATION_ERROR`); server-set `ownerId`/`updatedAt` on every
+  write, never client-controlled; field validation (`name` trimmed
+  non-empty string, `archived`/`isDefault` boolean if present) — capped
+  deliberately to what the authorization specified, nothing added
+  speculatively.
+- `src/controllers/classificationController.js` — thin request/response
+  wrapper, mirrors `authController.js`'s style.
+- `src/routes/classificationRouterFactory.js` (shared `GET /` + `PUT /:id`
+  wiring behind `requireAuth`) plus four explicit routers
+  (`categoryRoutes.js`, `locationRoutes.js`, `tagRoutes.js`,
+  `unitRoutes.js`) — each a few lines binding the shared factory to one
+  model, keeping the four public paths explicit while not duplicating the
+  actual routing logic four times.
+- `src/app.js` — mounts the four routers at `/api/categories`,
+  `/api/locations`, `/api/tags`, `/api/units`, before `notFoundHandler`/
+  `errorHandler`.
+- `tests/categoryRoutes.test.js`, `tests/locationRoutes.test.js`,
+  `tests/tagRoutes.test.js`, `tests/unitRoutes.test.js` — 21 tests each
+  (84 total), `node --test` + `MongoMemoryReplSet` + `supertest`, covering
+  every case in the Phase 5C authorization's Listing/Upsert/Validation/
+  Ownership sections. **Placed flat in `tests/`, not under a `tests/
+  routes/` subdirectory** — see the file-placement note below; this
+  matches the one existing precedent (`authRoutes.test.js`) rather than
+  inventing a new nesting convention for router tests specifically.
+
+### The cross-owner upsert collision — the one genuinely tricky part of this slice
+
+Flagged during review as the place a naively-written `findOneAndUpdate(...,
+{ upsert: true })` could quietly do the wrong thing: if the update filter
+matches on `_id` alone, an attacker/bug submitting another owner's existing
+`entityId` would silently overwrite that owner's document.
+
+**Resolution:** the filter matches on `{ _id: urlId, ownerId }` together,
+never `_id` alone. If `urlId` already exists under a *different* owner,
+this filter matches nothing — so Mongo's upsert attempts an **insert**
+with that `_id`, which collides with the existing document and throws a
+duplicate-key error (code `11000`) rather than silently overwriting or
+silently no-oping. `classificationService.js` catches that specific error
+and translates it into an explicit `CONFLICT` (409). Tests prove: (a) the
+victim's document is unchanged, (b) exactly one document exists for that
+`_id` afterward (`countDocuments === 1`, added during review — the
+original test only checked the *content* was unchanged, not that no
+second document existed), and (c) two owners choosing two genuinely
+*different* ids never interfere with each other (a test that was
+initially titled as if it proved same-id coexistence across owners — it
+did not, and could not, since `_id` is a globally unique Mongo primary
+key; caught in review and renamed/re-commented rather than left
+misleading).
+
+### A test that was written, then disproven, then removed — worth recording
+
+A test asserting that a bare JSON primitive body (e.g. a raw string) would
+reach `classificationService` and fail with `VALIDATION_ERROR` was added
+during the review-response pass, based on reasoning about the code rather
+than observing the real pipeline. When actually run against the real
+Express app, `express.json()`'s default `strict: true` mode rejects a
+bare JSON primitive **at the body-parser layer**, before Express routing
+— the real observed response was `500 INTERNAL_ERROR`, not `400
+VALIDATION_ERROR`, and the request never reached the service at all. The
+test was deleted rather than "fixed" to match the wrong behavior; its one
+legitimate assertion (error-message consistency) was merged into the
+adjacent array-payload test, which **does** verifiably reach the service
+(confirmed by direct execution, not inference). The
+`classificationService.js` code change that motivated the deleted test
+(not coercing non-object payloads to `{}` before validating) was kept —
+it's still correct for the service's own internal consistency and for any
+future non-HTTP caller — but its comment was corrected to state plainly
+that a bare-primitive HTTP request can't reach this path today, rather
+than implying it could.
+
+### File-placement correction: flat `tests/`, not `tests/routes/`
+
+The four test files were initially delivered under a `tests/routes/`
+subdirectory, invented without checking the actual existing convention
+first. The only real precedent — `src/routes/authRoutes.js` →
+`tests/authRoutes.test.js` — places router-level tests **flat**, not
+mirrored under a `tests/<subdir>/` structure the way `config/`,
+`middleware/`, `models/`, `services/`, and `scripts/` are. This surfaced
+as import-path failures (`../helpers/testDb.js` etc. resolved from the
+wrong depth) when the project owner ran the suite locally. Fixed by
+deleting `tests/routes/` and placing the four files flat in `tests/`,
+with imports corrected to match (`./helpers/testDb.js`, `../src/app.js`,
+etc.) — decided by checking the one real existing precedent rather than
+guessing, and confirmed by an actual local run reaching the `before()`
+hook (only stopping at the expected Mongo-binary-download point) rather
+than failing on `ERR_MODULE_NOT_FOUND` as it had before the fix.
+
+### Full local verification (outside the sandbox) — ✅ CONFIRMED GREEN
+
+Run by the project owner on their own machine, with real network access to
+`fastdl.mongodb.org`. **All backend tests pass**, including all 84 new
+Phase 5C classification tests — this is the first real, not just
+reasoned-through, confirmation of the cross-owner collision handling, the
+identity-rule enforcement, and the upsert idempotency behavior against a
+genuine MongoDB replica set.
+
+Mongo-free baseline (confirmable in-sandbox throughout this phase, and
+reconfirmed after every edit): **75/75 passing, unaffected.** Frontend:
+**689/689, unaffected** — Phase 5C touched no frontend files.
+
+The standing "written but unverified in this sandbox" caveat is now
+resolved for every test that exists as of the end of Phase 5C. Per the
+Phase 5B entry's own note, this is a per-slice caveat — it will apply
+again to whatever new Mongo-dependent tests Phase 5D writes, until those
+are likewise confirmed for real.
+
+### 5D–5G — NOT STARTED
 
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED

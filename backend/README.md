@@ -62,3 +62,8 @@ limitation, not a code defect. Tests that don't touch MongoDB (e.g.
 `tests/config/env.test.js`, `tests/middleware/AppError.test.js`,
 `tests/app.test.js`'s non-DB-dependent cases) are unaffected and should
 be treated as the reliable signal in such an environment.
+
+This is a sandbox-specific limitation, not a general one — on a machine
+with normal outbound network access, the full suite (including every
+`MongoMemoryReplSet`-dependent test) runs and passes with no special
+configuration. Confirmed through the end of Phase 5C.
