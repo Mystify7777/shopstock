@@ -14,6 +14,10 @@ import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
 import { connectionState } from './config/db.js';
 import { createAuthService } from './services/authService.js';
 import { createAuthRouter } from './routes/authRoutes.js';
+import { createCategoryRouter } from './routes/categoryRoutes.js';
+import { createLocationRouter } from './routes/locationRoutes.js';
+import { createTagRouter } from './routes/tagRoutes.js';
+import { createUnitRouter } from './routes/unitRoutes.js';
 
 /**
  * Build the Express app.
@@ -60,9 +64,19 @@ export function createApp(options = {}) {
   });
   app.use('/api/auth', createAuthRouter(authService, { jwtAccessSecret: options.jwtAccessSecret }));
 
-  // Remaining domain routers (products, stock-events, classifications)
-  // are mounted here in later Phase 5 slices (5C onward). Intentionally
-  // not present yet.
+  // Phase 5C: classification routers (categories/locations/tags/units).
+  // Each is an explicit public resource path per the Phase 5C
+  // authorization -- no generic /api/classifications/:type endpoint --
+  // even though they all share the same router/service/controller
+  // factory internally (see routes/classificationRouterFactory.js).
+  const classificationRouterConfig = { jwtAccessSecret: options.jwtAccessSecret };
+  app.use('/api/categories', createCategoryRouter(classificationRouterConfig));
+  app.use('/api/locations', createLocationRouter(classificationRouterConfig));
+  app.use('/api/tags', createTagRouter(classificationRouterConfig));
+  app.use('/api/units', createUnitRouter(classificationRouterConfig));
+
+  // Remaining domain routers (products, stock-events) are mounted here
+  // in later Phase 5 slices (5D onward). Intentionally not present yet.
 
   app.use(notFoundHandler);
   app.use(errorHandler);
