@@ -1043,7 +1043,7 @@ Phase 5A file changed. No frontend file changed. No Phase 5B work
 started.** Full backend suite re-run: 37/37 passing. Frontend suite
 re-run: 689/689 passing, unaffected. `MongoMemoryReplSet`
 sandbox-network caveat is unchanged and still applies.
-### 5B — Authentication ✅ COMPLETE
+### 5B — Authentication ✅ COMPLETE AND FULLY VERIFIED
 
 Files:
 - `backend/src/models/User.js` (new) — `User` Mongoose model. **`_id`
@@ -1244,8 +1244,59 @@ Re-run after the corrective pass: Mongo-free suite (isolating the two
 Mongo-dependent files the same way as before) — **75/75 passing, 0
 cancelled, ~2.5s.** Frontend: 689/689, unaffected. The two Mongo-dependent
 files (`authService.test.js`, now 18 tests; `seed.test.js`, new, 5 tests)
-remain confirmed-to-parse-and-fail-at-the-expected-point only — the
-standing sandbox caveat is unchanged and now applies to a third file.
+remained confirmed-to-parse-and-fail-at-the-expected-point only at that
+point — see the full local verification below, which resolves this.
+
+#### Full local verification (outside the sandbox) — ✅ CONFIRMED GREEN
+
+Run by the project owner on their own machine, with real network access
+to `fastdl.mongodb.org` (which this development sandbox cannot reach —
+see the standing limitation noted throughout this Phase 5B entry).
+
+**Result: 103 tests, 26 suites, 103 pass, 0 fail, 0 cancelled, 0
+skipped.** This is the first time the complete backend suite — including
+every `MongoMemoryReplSet`-dependent test — has actually executed
+end-to-end. It genuinely, not just by careful reasoning, confirms:
+
+- The atomic refresh-rotation rewrite (single `findOneAndUpdate()` with
+  an aggregation-pipeline `$set`/`$filter`/`$concatArrays` update) behaves
+  correctly against a real MongoDB replica set.
+- **The concurrent-refresh test passes**: two simultaneous `refresh()`
+  calls presenting the same old token — exactly one succeeds, the other
+  receives 401 — the single most important test in this phase, now
+  observed passing, not just argued through in code comments.
+- `seedUser()`'s idempotency (no duplicate creation, no password reset on
+  re-run) holds against real persistence.
+- Every other Mongo-dependent case in `authService.test.js` (login,
+  logout, password change, session-invalidation-on-password-change, all
+  the failure-path rejections) passes against real data.
+
+The standing "written but unverified in this sandbox" caveat that has
+applied to Mongo-dependent tests since Phase 5A is now **resolved for
+every test that exists as of the end of Phase 5B**. It will still apply
+to any *new* Mongo-dependent tests written in Phase 5C onward, in this
+same development sandbox, until they are likewise confirmed on a machine
+with real network access — this is a per-slice caveat, not a one-time
+gap that stays permanently closed.
+
+**A genuine file-delivery gap was found and fixed along the way, worth
+recording:** the output-delivery process during this phase only included
+files with *new* changes in each specific pass (5A, 5B, 5B-corrective),
+rather than the complete current state of `backend/` — so `app.js`
+(which received its auth-router-mounting edit during the original 5B
+pass, not the corrective pass) and `models/User.js` and
+`services/tokenService.js` were never actually re-delivered after their
+initial inclusion, and did not make it into the committed local
+repository. This surfaced as `ERR_MODULE_NOT_FOUND` and every auth route
+404ing locally, despite the sandbox's own copy being correct throughout
+— confirmed by inspection before any fix was made, per the instruction
+not to modify tests or re-architect anything to chase the symptom.
+Resolved by delivering the complete, current `backend/src/` and
+`backend/tests/` file sets in one batch rather than an incremental diff.
+**Going forward, output batches for this project should default to the
+complete current file set for any directory touched, not an
+incremental-changes-only list**, to avoid this class of gap recurring in
+Phase 5C.
 
 ### 5C–5G — NOT STARTED
 

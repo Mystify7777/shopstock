@@ -12,14 +12,25 @@ import express from 'express';
 import cors from 'cors';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
 import { connectionState } from './config/db.js';
+import { createAuthService } from './services/authService.js';
+import { createAuthRouter } from './routes/authRoutes.js';
 
 /**
  * Build the Express app.
  *
- * @param {{ corsOrigin?: string }} [options] corsOrigin defaults to
- *   allowing no cross-origin requests if omitted (safer default for a
- *   test-constructed app than accidentally wildcarding) -- server.js
- *   always passes the real configured origin explicitly.
+ * @param {{
+ *   corsOrigin?: string,
+ *   jwtAccessSecret?: string,
+ *   jwtAccessExpiresIn?: string,
+ *   refreshTokenExpiresInDays?: number
+ * }} [options] corsOrigin defaults to allowing no cross-origin requests
+ *   if omitted (safer default for a test-constructed app than
+ *   accidentally wildcarding) -- server.js always passes the real
+ *   configured origin explicitly. The auth-related options are required
+ *   for the auth routes to function correctly; tests that don't exercise
+ *   auth routes may omit them, since createApp() itself never reads
+ *   process.env directly (all config flows in as an explicit parameter,
+ *   consistent with config/env.js's own testability design).
  * @returns {import('express').Express}
  */
 export function createApp(options = {}) {
@@ -42,9 +53,16 @@ export function createApp(options = {}) {
     });
   });
 
-  // Domain routers (products, stock-events, classifications, auth) are
-  // mounted here in later Phase 5 slices (5B onward). Intentionally not
-  // present yet in 5A.
+  const authService = createAuthService({
+    jwtAccessSecret: options.jwtAccessSecret,
+    jwtAccessExpiresIn: options.jwtAccessExpiresIn,
+    refreshTokenExpiresInDays: options.refreshTokenExpiresInDays
+  });
+  app.use('/api/auth', createAuthRouter(authService, { jwtAccessSecret: options.jwtAccessSecret }));
+
+  // Remaining domain routers (products, stock-events, classifications)
+  // are mounted here in later Phase 5 slices (5C onward). Intentionally
+  // not present yet.
 
   app.use(notFoundHandler);
   app.use(errorHandler);
