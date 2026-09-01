@@ -4,6 +4,12 @@
 // that turns it into the standard { error: { code, message } } response
 // shape. Route handlers never construct a raw Express error response
 // directly -- this is the one path.
+//
+// RATE_LIMITED added during the Phase 5B corrective pass: rate limiting
+// is a distinct failure mode from a validation error (the request body
+// itself may be perfectly well-formed; the caller is simply being
+// throttled), and reusing VALIDATION_ERROR for it was a genuine
+// mislabeling caught in review, not a stylistic preference.
 
 export const ERROR_CODES = Object.freeze({
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -14,6 +20,7 @@ export const ERROR_CODES = Object.freeze({
   QUANTITY_CONSISTENCY_CONFLICT: 'QUANTITY_CONSISTENCY_CONFLICT',
   ALREADY_REVERSED: 'ALREADY_REVERSED',
   DUPLICATE_ENTITY: 'DUPLICATE_ENTITY',
+  RATE_LIMITED: 'RATE_LIMITED',
   INTERNAL_ERROR: 'INTERNAL_ERROR'
 });
 
@@ -26,6 +33,7 @@ const DEFAULT_STATUS_BY_CODE = {
   QUANTITY_CONSISTENCY_CONFLICT: 409,
   ALREADY_REVERSED: 409,
   DUPLICATE_ENTITY: 409,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500
 };
 

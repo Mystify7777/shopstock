@@ -1043,7 +1043,211 @@ Phase 5A file changed. No frontend file changed. No Phase 5B work
 started.** Full backend suite re-run: 37/37 passing. Frontend suite
 re-run: 689/689 passing, unaffected. `MongoMemoryReplSet`
 sandbox-network caveat is unchanged and still applies.
-### 5B–5G — NOT STARTED
+### 5B — Authentication ✅ COMPLETE
+
+Files:
+- `backend/src/models/User.js` (new) — `User` Mongoose model. **`_id`
+  strategy verified against `ARCHITECTURE.md` before implementing, not
+  assumed** (a correction made after initial review): standard MongoDB
+  `ObjectId`, not the `entityId`-as-`_id` convention every other
+  collection uses — that convention is stated in `ARCHITECTURE.md`'s
+  MongoDB schema section as serving sync/dedup for client-originated
+  entities, and `User` is server-created via the seed script only, never
+  synced, never referenced by `entityId`. Located by unique `username`
+  instead. `refreshTokens[]`: `{ tokenHash, deviceLabel, createdAt,
+  expiresAt, revoked }` — `tokenHash` is SHA-256 (not bcrypt — bcrypt's
+  cost is right for a low-entropy password, wrong for an
+  already-high-entropy random token), `expiresAt` explicit per-entry
+  (opaque tokens aren't self-describing like a JWT). Exports
+  `toDeviceLabel()`, a pure helper bounding a raw `User-Agent` header to
+  200 chars with a fallback for missing/empty headers.
+- `backend/src/services/tokenService.js` (new) — pure token mechanics:
+  `generateRefreshToken()` (256-bit random, hex), `hashRefreshToken()`
+  (SHA-256), `computeRefreshTokenExpiry()`, `signAccessToken()`/
+  `verifyAccessToken()` (JWT, minimal `{ sub }` payload only — no
+  username/role claims, since there's exactly one user and no roles).
+- `backend/src/services/authService.js` (new) — `login`, `refresh`,
+  `logout`, `changePassword`. Key behaviors:
+  - **Login**: bcrypt-compares against a dummy hash even for an unknown
+    username, so "unknown username" and "wrong password" have a similar
+    timing profile; returns the identical `AppError` for both (no
+    username enumeration).
+  - **Refresh rotation — locked lifecycle**: the OLD token entry is
+    **removed outright**, not revoked-and-kept (no growing graveyard).
+    **Concurrency contract**: two concurrent `refresh()` calls presenting
+    the same old token — exactly one succeeds, the other gets 401. This
+    falls directly out of `findOneAndUpdate()`'s filter including the
+    exact `tokenHash` being consumed: MongoDB serializes writes to the
+    same document, so the losing concurrent request's identical filter
+    no longer matches after the winner's `$pull` commits, and
+    `findOneAndUpdate` returns `null` for it — no separate locking
+    primitive needed. (Verified by careful reasoning about MongoDB's
+    single-document write serialization guarantees; **not yet verified
+    by actually running the concurrency test** — see the sandbox caveat
+    below.)
+  - **Logout**: no access token required (locked, reversing my own
+    initial proposal after review). Idempotent — always `200 { success:
+    true }`, whether the token existed, was already revoked, or expired;
+    never an oracle for token validity.
+  - **Password change**: verifies `currentPassword`, updates the hash
+    AND clears `refreshTokens` to `[]` in one `$set` update — no
+    observable window where the password changed but old sessions
+    remain valid. Issues no replacement tokens; the user must log in
+    again, including on the device that made the request.
+- `backend/src/middleware/requireAuth.js` (new) — stateless access-token
+  verification middleware; attaches `req.user = { id }`; never logs the
+  Authorization header or token, on success or failure.
+- `backend/src/middleware/authRateLimiter.js` (new) — isolated
+  `express-rate-limit` config (10 requests / 15 minutes / IP — an
+  explicitly-flagged reasonable default, not a researched number),
+  applied to `/login` and `/refresh` only, not `/logout` or `/password`.
+- `backend/src/controllers/authController.js` (new) — thin
+  request/response wrappers; input presence/type validation happens here
+  (and correctly throws before ever touching `authService`/Mongo for a
+  malformed request — confirmed by the fast, Mongo-free validation
+  tests).
+- `backend/src/routes/authRoutes.js` (new) — `POST /login`, `POST
+  /refresh` (both rate-limited), `POST /logout` (not rate-limited, no
+  auth required), `PATCH /password` (behind `requireAuth`, not
+  rate-limited — different abuse profile per the locked contract).
+- `backend/src/app.js` — extended to build `authService` and mount
+  `createAuthRouter()` at `/api/auth`; `createApp()`'s options now
+  include the JWT/refresh-token config, all still flowing in as explicit
+  parameters (no direct `process.env` reads inside `app.js`, consistent
+  with `config/env.js`'s testability design).
+- `backend/server.js` — passes the new JWT/refresh-token config through
+  to `createApp()`.
+- `backend/tests/models/User.test.js`, `tests/services/tokenService.test.js`,
+  `tests/middleware/requireAuth.test.js`, `tests/authRoutes.test.js` (new)
+  — all Mongo-free, all **genuinely executed**.
+- `backend/tests/services/authService.test.js` (new) — the real
+  login/refresh/logout/password-change behavior, **including the
+  critical concurrent-refresh test**. Mongo-dependent; **written but
+  NOT executed in this session** — confirmed to parse and import
+  correctly, and confirmed to fail at exactly the expected point
+  (`MongoMemoryReplSet` binary download) when actually run, not at any
+  earlier syntax/logic error.
+
+**Real bug found and fixed during this slice, via actually running the
+Mongo-free route tests, not just reading them:** the newly-added
+Mongo-free `authRoutes.test.js` tests were each taking 10+ seconds
+(correctly passing, but for the wrong reason) because Mongoose's default
+command buffering waited its full timeout before erroring, since that
+test file never calls `connectDb()` (deliberately — it only exercises
+validation-before-any-DB-call paths and 401 behavior). Fixed by setting
+`mongoose.set('bufferCommands', false)` at the top of that specific test
+file, mirroring the same fail-fast principle `config/db.js`'s
+`connectDb()` already applies for the real connected case. Full suite
+time for the Mongo-free tests dropped from ~30s to ~600ms for the
+affected file, with identical pass/fail outcomes — confirming the slowness
+was pure overhead, not a hidden correctness dependency on the delay.
+
+**Sandbox test-run finding (new since 5A, worth stating precisely):**
+running the full suite via plain `node --test`/`npm test` in this
+sandbox now correctly **exits 1** (not a false green), because
+`authService.test.js`'s `before(connectTestDb)` hook hangs attempting
+the `MongoMemoryReplSet` binary download, times out, and Node's test
+runner correctly marks every test in that file as `cancelledByParent` —
+accurate, honest reporting of a genuinely blocked dependency, not a
+bug to suppress. **The trustworthy signal in this sandbox is obtained by
+running every test file except `tests/services/authService.test.js`**:
+confirmed **74/74 passing, 0 cancelled, ~2.5s**, by temporarily removing
+that one file from discovery and restoring it immediately after.
+`authService.test.js` itself (18 tests, including the concurrent-refresh
+test) needs to be run for real, outside this sandbox, before Phase 5B's
+completion gate can be honestly claimed as fully passing — the same
+standing caveat as 5A, now applying to a second file.
+
+Test count this slice: **74 new/updated Mongo-free tests passing**
+(6 User/toDeviceLabel + 13 tokenService + 7 requireAuth + 11 authRoutes,
+plus pre-existing 5A tests re-confirmed) **+ 18 Mongo-dependent tests in
+authService.test.js, written but unverified in this sandbox.** Frontend:
+689/689, unaffected.
+
+#### 5B corrective pass (post-review)
+
+Two required fixes and two recommended corrections, all addressed:
+
+1. **Required fix — refresh rotation made genuinely atomic.** The
+   original implementation performed `findOneAndUpdate()` with `$pull`
+   followed by a *separate* `updateOne()` with `$push` — two round
+   trips, correctly preventing double-consumption of the old token (the
+   `$pull`'s match/no-match outcome was already race-safe), but leaving
+   a real window where the old token was gone and the new one wasn't
+   yet persisted. **Fixed** by replacing both calls with a single
+   `findOneAndUpdate()` using a MongoDB aggregation-pipeline update
+   (`$set` with `$filter` + `$concatArrays`, computed in one expression)
+   — the entire remove-old/add-new state transition now happens in
+   exactly one atomic document write. The query filter (matching only a
+   still-present, non-revoked, unexpired token) continues to provide the
+   same concurrency guarantee as before, now correctly backing a
+   genuinely atomic operation rather than the first half of a two-step
+   one. The existing concurrent-refresh test in `authService.test.js`
+   is unchanged in intent (two concurrent calls, same old token, exactly
+   one succeeds) and still the anchor test for this behavior — still
+   unverified in this sandbox for the same standing reason.
+2. **Required fix — seed workflow implemented.**
+   `backend/src/scripts/seed.js` (new) + `npm run seed` (new
+   `package.json` script). Split into `seedUser()` (testable core logic,
+   takes explicit `{ username, password }`, requires an already-active
+   Mongoose connection, never calls `process.exit`) and a CLI entrypoint
+   wrapper (loads real config via `loadConfig()`, connects/disconnects,
+   translates outcomes to process exit codes) — the same separation
+   already established by `config/env.js`'s `validateEnv()`/
+   `loadConfig()` split, for the identical reason: core logic needs to
+   be unit-testable without killing the test process. Idempotent:
+   returns `{ created: false, ... }` and does nothing if the username
+   already exists; never resets an existing password on re-run; never
+   creates a duplicate. `backend/tests/scripts/seed.test.js` (new, 5
+   tests) — Mongo-dependent, same standing sandbox caveat as
+   `authService.test.js`, confirmed to parse/import correctly and fail
+   at exactly the expected binary-download point when actually run.
+3. **Recommended correction — rate-limit error code.** `AppError`'s
+   locked vocabulary extended from 9 to **10** codes: added
+   `RATE_LIMITED` (429), previously the rate limiter incorrectly reused
+   `VALIDATION_ERROR` (400) for a 429 response — a genuine mislabeling,
+   not a style preference, since a rate-limited request's body may be
+   perfectly well-formed. `authRateLimiter.js` updated to use the new
+   code; `AppError.test.js` updated for the vocabulary-size and
+   status-mapping assertions; a new Mongo-free test in
+   `authRoutes.test.js` genuinely exceeds the configured limit (11
+   sequential requests against one shared app instance, since
+   `express-rate-limit`'s counter is per-instance) and confirms both the
+   `429` status and the `RATE_LIMITED` code — **executed, passing**.
+4. **Recommended correction — narrowed the logout query.**
+   `authService.js`'s `logout()` previously used `User.updateOne({},
+   ...)`, matching the collection's first document unconditionally —
+   harmless today (exactly one seeded user) but an imprecise query that
+   only happened to work by coincidence, not something to leave as
+   "fine for now." Narrowed to `User.updateOne({ 'refreshTokens.tokenHash':
+   tokenHash }, ...)`. Idempotent/non-oracle logout behavior is
+   unaffected — a `$pull` against no matching document remains a
+   harmless no-op, and the caller still always receives `{ success: true
+   }`.
+5. **Checked, not changed** — `backend/.env.example` was verified to
+   already document every variable in `env.js`'s `REQUIRED_VARS` list
+   (cross-checked field-by-field), with sensible section comments; `.env`
+   is confirmed gitignored at the repo root (`*.env` with an explicit
+   `!*.env.example` exception). No edit was needed; reporting this as
+   verified-and-already-satisfied rather than making an unnecessary
+   change.
+
+Corrective-pass diff scope: `src/services/authService.js` (rotation +
+logout), `src/middleware/AppError.js` (new code), `src/middleware/
+authRateLimiter.js` (code fix), `src/scripts/seed.js` (new), `package.json`
+(new `seed` script), `tests/middleware/AppError.test.js` (updated),
+`tests/authRoutes.test.js` (new rate-limit test), `tests/scripts/
+seed.test.js` (new). **No other file changed. No frontend file changed.
+No Phase 5C work started.**
+
+Re-run after the corrective pass: Mongo-free suite (isolating the two
+Mongo-dependent files the same way as before) — **75/75 passing, 0
+cancelled, ~2.5s.** Frontend: 689/689, unaffected. The two Mongo-dependent
+files (`authService.test.js`, now 18 tests; `seed.test.js`, new, 5 tests)
+remain confirmed-to-parse-and-fail-at-the-expected-point only — the
+standing sandbox caveat is unchanged and now applies to a third file.
+
+### 5C–5G — NOT STARTED
 
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
