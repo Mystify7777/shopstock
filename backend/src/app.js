@@ -18,6 +18,7 @@ import { createCategoryRouter } from './routes/categoryRoutes.js';
 import { createLocationRouter } from './routes/locationRoutes.js';
 import { createTagRouter } from './routes/tagRoutes.js';
 import { createUnitRouter } from './routes/unitRoutes.js';
+import { createProductRouter } from './routes/productRoutes.js';
 
 /**
  * Build the Express app.
@@ -64,19 +65,31 @@ export function createApp(options = {}) {
   });
   app.use('/api/auth', createAuthRouter(authService, { jwtAccessSecret: options.jwtAccessSecret }));
 
+  // Shared { jwtAccessSecret } shape used by every router factory below
+  // that needs requireAuth but nothing else from options.
+  const routerAuthConfig = { jwtAccessSecret: options.jwtAccessSecret };
+
   // Phase 5C: classification routers (categories/locations/tags/units).
   // Each is an explicit public resource path per the Phase 5C
   // authorization -- no generic /api/classifications/:type endpoint --
   // even though they all share the same router/service/controller
   // factory internally (see routes/classificationRouterFactory.js).
-  const classificationRouterConfig = { jwtAccessSecret: options.jwtAccessSecret };
-  app.use('/api/categories', createCategoryRouter(classificationRouterConfig));
-  app.use('/api/locations', createLocationRouter(classificationRouterConfig));
-  app.use('/api/tags', createTagRouter(classificationRouterConfig));
-  app.use('/api/units', createUnitRouter(classificationRouterConfig));
+  app.use('/api/categories', createCategoryRouter(routerAuthConfig));
+  app.use('/api/locations', createLocationRouter(routerAuthConfig));
+  app.use('/api/tags', createTagRouter(routerAuthConfig));
+  app.use('/api/units', createUnitRouter(routerAuthConfig));
 
-  // Remaining domain routers (products, stock-events) are mounted here
-  // in later Phase 5 slices (5D onward). Intentionally not present yet.
+  // Phase 5D: Product persistence. Product ONLY -- ProductChangeEvent
+  // persistence was deliberately reverted out of this phase (see
+  // productModel.js's header comment) and is deferred to its own later
+  // slice, since ProductChangeEvent.id is client-generated and arrives
+  // as a separate sync entityType, not something this endpoint should
+  // diff/invent server-side.
+  app.use('/api/products', createProductRouter(routerAuthConfig));
+
+  // Remaining domain routers (stock-events, product-change-events) are
+  // mounted here in later Phase 5 slices (5E onward). Intentionally not
+  // present yet.
 
   app.use(notFoundHandler);
   app.use(errorHandler);
