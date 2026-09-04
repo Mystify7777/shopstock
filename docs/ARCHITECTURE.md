@@ -600,6 +600,76 @@ would mask a real client or sync bug rather than surfacing it. This rule
 applies to any future `PUT /:id`-style upsert endpoint (Product, Phase 5D)
 for the same reason.
 
+### Server-side quantity mutation transaction (binding pattern, established Phase 5E)
+
+`Product.quantity` has exactly one backend-controlled mutation path:
+`PUT /api/stock-events/:id`. The generic Product endpoint (`PUT
+/api/products/:id`, Phase 5D) permanently and unconditionally rejects a
+`quantity` key in its payload — checked by property presence via
+`Object.hasOwn()`, not truthiness, so `quantity: 0` is rejected exactly
+like any other value.
+
+The server computes quantity itself, authoritatively — it does not trust
+a client-supplied resulting quantity via any path. This is a deliberate
+resolution of a real tension: the client's own sync queue emits a
+`stockEvent` insert AND a separate `product` upsert (carrying the
+resulting quantity) as two independent sync operations. Reconciling that
+separately-queued client-computed quantity against the server's
+authoritative value is a Phase 6 sync-contract concern; Phase 5E does not
+weaken the Product-endpoint quantity boundary to accommodate it.
+
+**Transaction ordering is binding, not incidental — reordering these
+steps reopens a specific retry-breaking bug:**
+
+```
+1. idempotency check       -- existing StockEvent for {_id, ownerId}?
+                               YES -> return immediately, no mutation.
+2. load owned Product      -- {_id: productId, ownerId}. Missing -> NOT_FOUND.
+3. expectedCurrentQuantity check -- mismatch -> QUANTITY_CONSISTENCY_CONFLICT.
+4. reversal validation, if reversalOf present (see below)
+5. compute appliedQuantity + nextQuantity
+6. insert StockEvent
+7. update Product.quantity
+8. if reversal, patch original.reversedBy
+```
+
+Idempotency must run **before** the concurrency check. A successful
+request advances `product.quantity` away from whatever
+`expectedCurrentQuantity` the client sent; if the client retries with the
+same event id and its now-stale `expectedCurrentQuantity` after a lost
+response, checking concurrency first would reject a request whose effects
+already fully committed — rejecting the exact retry behavior a reliable
+client is supposed to perform.
+
+**Reversal requires three separate server-side invariants, not merely
+"the original exists and isn't already reversed":**
+
+1. `payload.quantity === originalEvent.appliedQuantity` — server-derived
+   authority; the client's submitted quantity is validated against, never
+   trusted over, the original's persisted `appliedQuantity`. This is what
+   prevents a reversal of a clamped over-removal from restoring the
+   originally *requested* quantity rather than what actually applied.
+2. `payload.type` is the opposite of `originalEvent.type` (`ADD` reverses
+   to `REMOVE` and vice versa). Quantity-matching alone is insufficient —
+   a same-type "reversal" with a matching quantity would double the
+   original movement instead of undoing it.
+3. `payload.productId === originalEvent.productId` — a reversal targeting
+   a different product than the event it claims to reverse would mutate
+   the wrong product's inventory while marking the unrelated original as
+   reversed.
+
+Writes inside the transaction (`Product.quantity`, `reversedBy`) check
+`matchedCount === 1` explicitly rather than assuming a write matched a
+document because an earlier read inside the same transaction succeeded —
+inventory-mutation code fails loudly on an unexpected zero-match write
+rather than silently trusting it.
+
+`appliedQuantity` is exclusively server-computed at commit time; a
+`changeEvents`-style rejection guard applies here too — a request body
+containing `appliedQuantity` (any value, including a value that happens
+to match what the server would have computed) is rejected with
+`VALIDATION_ERROR`, never silently accepted or overwritten.
+
 ## Sync model
 
 `SyncQueueEntry` is the **only** place sync/transport state is tracked.

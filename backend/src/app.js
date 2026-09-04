@@ -19,6 +19,7 @@ import { createLocationRouter } from './routes/locationRoutes.js';
 import { createTagRouter } from './routes/tagRoutes.js';
 import { createUnitRouter } from './routes/unitRoutes.js';
 import { createProductRouter } from './routes/productRoutes.js';
+import { createStockEventRouter } from './routes/stockEventRoutes.js';
 
 /**
  * Build the Express app.
@@ -87,9 +88,16 @@ export function createApp(options = {}) {
   // diff/invent server-side.
   app.use('/api/products', createProductRouter(routerAuthConfig));
 
-  // Remaining domain routers (stock-events, product-change-events) are
-  // mounted here in later Phase 5 slices (5E onward). Intentionally not
-  // present yet.
+  // Phase 5E: StockEvent processing -- the ONLY backend-controlled path
+  // for mutating Product.quantity. See stockEventService.js's header for
+  // the locked transaction ordering (idempotency check first, before
+  // the optimistic-concurrency check, so a retried request that already
+  // succeeded is never rejected merely because its first execution
+  // already advanced the inventory).
+  app.use('/api/stock-events', createStockEventRouter(routerAuthConfig));
+
+  // Remaining domain routers (product-change-events) are mounted here in
+  // a later Phase 5 slice. Intentionally not present yet.
 
   app.use(notFoundHandler);
   app.use(errorHandler);

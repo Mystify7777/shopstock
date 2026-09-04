@@ -1421,7 +1421,218 @@ Phase 5B entry's own note, this is a per-slice caveat — it will apply
 again to whatever new Mongo-dependent tests Phase 5D writes, until those
 are likewise confirmed for real.
 
-### 5D–5G — NOT STARTED
+### 5D — Product Persistence — ✅ COMPLETE AND FULLY VERIFIED
+
+Server-side CRUD for `Product`, scoped deliberately narrower than the
+original phase sketch after a mid-implementation architectural correction
+(see below).
+
+**The scope correction, worth recording in full because it's the most
+important thing about this phase:** the first draft of 5D implemented
+Product persistence AND server-side generation of `ProductChangeEvent`s
+via a diff between the incoming payload and the previously stored
+document, committed together in one transaction. This was **reverted
+before completion** once review established that `ProductChangeEvent.id`
+is client-generated (same `entityId`-as-`_id` convention as everything
+else in this project) and that the client's own `productService.js`
+already constructs fully-formed `ProductChangeEvent` objects, as a
+**separate sync operation** (`entityType: 'productChangeEvent'`, distinct
+from `entityType: 'product'`), before either ever reaches the server. A
+server that independently diffs and invents its own change events would
+create a second, competing authority for the exact historical record the
+client already owns — precisely the category of mistake this project's
+`entityId`/`clientId` philosophy exists to prevent. The unfinished
+diffing code was discarded outright, not patched into correctness.
+**ProductChangeEvent persistence is deferred to its own later slice**
+(renumbered 5F in the revised roadmap below) that will accept
+already-constructed event payloads with their client-assigned identity
+preserved, not synthesize new ones.
+
+**Files:**
+- `src/models/productModel.js` — `entityId`-as-`_id`, mirrors
+  `productFactory.js`'s field shape plus server-owned `ownerId`/
+  `updatedAt`. `quantity` is persisted (it's the materialized value) but
+  is never settable through this endpoint — see below.
+- `src/services/productService.js` — the quantity-rejection invariant
+  (`quantity` in the payload, under any value including `0`/`null`,
+  checked by property presence via `Object.hasOwn()`, not truthiness →
+  `VALIDATION_ERROR`, new products default to `quantity: 0` server-side)
+  and the changeEvents-rejection invariant (a `changeEvents` key in the
+  payload, including an empty array, → `VALIDATION_ERROR`) — both added
+  as explicit, tested guards, not just comments, after review pointed
+  out the first delivery only documented the changeEvents boundary
+  without actually enforcing it. Identity validation (PRD §4.1: name or
+  photoRef required) is checked against the **effective post-patch
+  state** (existing + payload merged), not the payload in isolation, so
+  a photoRef-only update to an already-named product isn't wrongly
+  rejected. Same `{_id, ownerId}` cross-owner-collision → `CONFLICT`
+  pattern as `classificationService.js`. Single-document upsert, no
+  session/transaction — correctly, since there's no second collection to
+  coordinate with once `ProductChangeEvent` was removed from scope.
+- `src/controllers/productController.js`, `src/routes/productRoutes.js`
+  — thin, matching the established pattern.
+- `tests/productRoutes.test.js` — 48 tests: listing, creation, the
+  quantity invariant (including presence-not-truthiness for
+  `quantity: 0`/`null`, and an update-time rejection verified to cause
+  no partial write), the changeEvents invariant (create, update, and an
+  empty array specifically — proving presence-not-emptiness — plus a
+  test confirming a rejected multi-field update leaves every field
+  untouched, not just the one the illegal payload happened to mention),
+  patch semantics, identity validation on partial updates, field
+  validation, ownership isolation, and two explicit assertions that
+  `productChangeEvents` stays empty across both creation and updates to
+  tracked-looking fields.
+
+**Verified locally by the project owner, full backend suite passing.**
+Mongo-free baseline held at 75/75 throughout; frontend untouched.
+
+**Endpoints:** `GET /api/products` (`?includeArchived=true`),
+`PUT /api/products/:id`. No `GET /:id`, no `DELETE` — archive-only, same
+as classifications.
+
+---
+
+### 5E — Stock Events and Controlled Quantity Mutation — ✅ COMPLETE AND FULLY VERIFIED
+
+Implements the **only legitimate backend path for changing
+`Product.quantity`**. `PUT /api/products/:id` (Phase 5D) permanently
+rejects `quantity` in its payload; this phase is where that authority
+actually lives.
+
+**Investigation-first discipline, per the phase's own instruction:** Pass
+1 was investigation-only (no code), inspecting `stockEventFactory.js`,
+`applyStockEvent.js`, `reversal.js`, `stockEventRepository.js`'s commit
+transaction, and `ARCHITECTURE.md`'s sync/idempotency sections before any
+contract was proposed. This surfaced a real architectural tension worth
+recording: the client's own sync queue emits a `stockEvent` insert AND a
+*separate* `product` upsert (with the resulting quantity, under a fresh
+`clientId`) as two independent sync operations. Locked resolution: the
+server computes quantity itself, authoritatively, mirroring
+`applyStockEvent()` — it does not trust a client-supplied quantity via
+any path, including a `product` sync entry. Reconciling the client's
+separately-queued `product` quantity upsert against this authoritative
+server-computed value is explicitly a **Phase 6 sync-contract concern**,
+not weakened into this phase.
+
+**Locked transaction ordering** (`stockEventService.js`'s `processEvent()`,
+one Mongoose session per request):
+
+```
+1. idempotency check       -- existing StockEvent for {_id, ownerId}?
+                               YES -> return immediately, no mutation.
+2. load owned Product      -- {_id: productId, ownerId}. Missing -> NOT_FOUND.
+3. expectedCurrentQuantity check -- mismatch -> QUANTITY_CONSISTENCY_CONFLICT.
+4. reversal validation, if reversalOf present (see below)
+5. compute appliedQuantity + nextQuantity (mirrors applyStockEvent.js exactly)
+6. insert StockEvent
+7. update Product.quantity  -- matchedCount checked explicitly
+8. if reversal, patch original.reversedBy -- matchedCount checked explicitly
+```
+
+**Why idempotency runs first, before the concurrency check — the
+retry-breaking bug this ordering exists to prevent:** a successful
+request advances `product.quantity` away from whatever
+`expectedCurrentQuantity` the client sent. If the client's response is
+lost and it retries with the same event id and the now-stale
+`expectedCurrentQuantity`, checking concurrency before idempotency would
+reject a request whose effects already fully committed — punishing
+exactly the retry behavior a reliable client is supposed to perform.
+Explicitly tested: a retry carrying its original `expectedCurrentQuantity`
+against a product whose real quantity has already moved succeeds as a
+no-op, not a `409`.
+
+**Reversal validation — three separate invariants, two of them added
+during a second review pass after the first delivery only implemented
+one:**
+1. **Quantity equals the original's stored `appliedQuantity`** — server-
+   derived authority, not trusted from the client. This is what prevents
+   a reversal from restoring the *originally requested* quantity of an
+   over-removal instead of what actually applied (e.g. `REMOVE 10` on a
+   stock of `4` clamps to `appliedQuantity: 4`; a reversal claiming
+   `quantity: 10` would manufacture 6 units of inventory that were never
+   actually removed — rejected with `VALIDATION_ERROR`).
+2. **Opposite event type** (added after review) — reversing an `ADD`
+   must submit `REMOVE` and vice versa. Quantity-matching alone is not
+   sufficient: a same-type "reversal" with a matching quantity would
+   silently *double* the original movement instead of undoing it. This
+   was the more dangerous of the two gaps found in review, since it
+   directly manufactures/destroys inventory rather than merely
+   misattributing it.
+3. **Same product as the original event** (added after review) — a
+   reversal targeting a different product than the event it claims to
+   reverse would mutate the wrong product's inventory while marking the
+   unrelated original as reversed, corrupting the historical relationship
+   between the two events.
+
+**Hardening pass, applied after a second review round:** the two
+`updateOne` writes (Product quantity, original event's `reversedBy`) now
+explicitly check `matchedCount === 1` and throw `NOT_FOUND` rather than
+silently trusting that a write inside the transaction necessarily matched
+a document, since inventory-mutation code should fail loudly on an
+unexpected zero-match write rather than assume correctness because an
+earlier read happened to succeed. Also tightened
+`originalEvent.reversedBy !== null` to `!= null`, so the already-reversed
+check catches `undefined` as well as `null` even though the schema's
+default makes this a belt-and-suspenders change under normal operation.
+
+**Files:**
+- `src/models/stockEventModel.js` — `entityId`-as-`_id` doubles as the
+  idempotency key for this insert-only collection (no separate
+  `clientId` field, matching `ARCHITECTURE.md`'s confirmed "server
+  rejects/ignores duplicate clientId" contract — for an insert-only
+  collection keyed by entityId, existence-by-id already answers that).
+  Stores `appliedQuantity` (commit-time-only persistence metadata, never
+  part of the domain `StockEvent` shape, and never client-writable — see
+  validation below).
+- `src/services/stockEventValidation.js` — pure shape/static-field
+  validation only, no DB access (everything requiring a lookup lives in
+  the transactional service). Went through one full review-correction
+  round: the first delivery's `isValidIsoDateTime()` relied on
+  `new Date()`'s permissiveness, which accepts freeform strings like
+  `"September 2, 2026"` and silently rolls impossible calendar dates
+  like `"2026-02-31"` over to `"2026-03-03"` instead of rejecting them.
+  Fixed by porting the client's own `dates.js` validators directly
+  (exact anchored-pattern match plus, for date-only values, a
+  `Date.UTC()` round-trip check) rather than inventing a second,
+  possibly-different strictness level. Also tightened `costPerUnit`/
+  `purchaseDate` rejection on `REMOVE` events from "rejects a meaningful
+  non-null value" to "rejects the key's presence at all, including an
+  explicit `null`" — the locked contract's literal wording.
+- `src/services/stockEventService.js` — the transactional core; see
+  above.
+- `src/controllers/stockEventController.js`, `src/routes/stockEventRoutes.js`
+  — thin. `GET /api/stock-events` (`?productId=`, `?includeReversed=`),
+  `PUT /api/stock-events/:id`. No separate reversal endpoint — a
+  reversal is submitted through the same `PUT /:id`, distinguished only
+  by `reversalOf` being present, mirroring `reversal.js`'s own domain
+  philosophy that reversal is not a separate operation from an ordinary
+  stock event.
+- `tests/stockEventRoutes.test.js` — 29 tests: basic ADD/REMOVE
+  processing including the over-removal clamp, optimistic concurrency,
+  idempotency (including the exact stale-`expectedCurrentQuantity`-retry
+  scenario), ownership isolation, cross-owner id collision, all three
+  reversal invariants (including both directions of the same-type
+  rejection, tested separately since a single test could pass against a
+  broken ternary that only rejects one direction), validation, listing,
+  and **two forced mid-transaction failure tests** — one breaks the
+  Product quantity update after the StockEvent insert has already
+  "succeeded," the other breaks the `reversedBy` patch specifically —
+  each proving genuine rollback (event count and quantity completely
+  unchanged) rather than assuming Mongo transactions work because the
+  driver documentation said something reassuring.
+
+**Verified locally by the project owner, full backend suite passing
+(263/263).** Mongo-free baseline held at 75/75 throughout every pass;
+frontend untouched.
+
+---
+
+### 5F–5G — NOT STARTED
+
+Renumbered per the Phase 5D scope correction: `ProductChangeEvent`
+persistence (originally sketched as part of 5D) is its own slice, 5F,
+accepting already-constructed client-generated event payloads. 5G remains
+hardening + integration verification across the full Phase 5 surface.
 
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
