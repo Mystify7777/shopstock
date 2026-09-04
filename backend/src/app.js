@@ -20,6 +20,7 @@ import { createTagRouter } from './routes/tagRoutes.js';
 import { createUnitRouter } from './routes/unitRoutes.js';
 import { createProductRouter } from './routes/productRoutes.js';
 import { createStockEventRouter } from './routes/stockEventRoutes.js';
+import { createProductChangeEventRouter } from './routes/productChangeEventRoutes.js';
 
 /**
  * Build the Express app.
@@ -96,8 +97,18 @@ export function createApp(options = {}) {
   // already advanced the inventory).
   app.use('/api/stock-events', createStockEventRouter(routerAuthConfig));
 
-  // Remaining domain routers (product-change-events) are mounted here in
-  // a later Phase 5 slice. Intentionally not present yet.
+  // Phase 5F: ProductChangeEvent persistence -- a pure historical record
+  // of client-decided Product field changes. This endpoint never diffs
+  // Products, never generates events, and never mutates the Product it
+  // references; the Product lookup in productChangeEventService.js is
+  // validation-only (confirms the referenced Product exists and belongs
+  // to the caller), never a basis for computing or second-guessing the
+  // change itself. See productChangeEventModel.js's header for why this
+  // was deliberately kept out of Phase 5D's scope.
+  app.use('/api/product-change-events', createProductChangeEventRouter(routerAuthConfig));
+
+  // All planned Phase 5 domain routers are now mounted. Remaining Phase
+  // 5 work (5G) is hardening/integration verification, not new routes.
 
   app.use(notFoundHandler);
   app.use(errorHandler);

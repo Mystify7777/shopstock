@@ -117,7 +117,7 @@ function assertNoAppliedQuantityInPayload(payload) {
  * whitespace-bearing value is rejected outright rather than trimmed and
  * silently accepted.
  */
-function isValidTimestamp(value) {
+export function isValidTimestamp(value) {
   if (typeof value !== 'string' || !TIMESTAMP_PATTERN.test(value)) {
     return false;
   }
