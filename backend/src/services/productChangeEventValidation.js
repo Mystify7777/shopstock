@@ -37,8 +37,7 @@
 
 import { AppError } from '../middleware/AppError.js';
 import { isValidTimestamp } from './stockEventValidation.js';
-
-const TRACKED_CHANGE_EVENT_FIELDS = ['name', 'category', 'location', 'tags', 'sellingPrice', 'archived'];
+import { TRACKED_CHANGE_EVENT_FIELDS } from '../models/productChangeEventModel.js';
 
 /**
  * Validate the identity relationship between the URL :id and an optional
