@@ -552,10 +552,21 @@ safe as a document key for entities that can be upserted more than once.
   shape — it's the domain fields plus this one piece of commit-time
   persistence metadata, exactly matching what the local Dexie row stores.
 - `productChangeEvents` — insert-only, same dedup strategy. Carries
-  `accepted` (see "Metadata conflict semantics") which *can* be updated
-  after the fact if a later-arriving-but-earlier-timestamped write changes
-  which record is authoritative — this is the one exception to "events are
-  never mutated," and it's narrowly scoped to this single boolean flag.
+  `accepted` (see "Metadata conflict semantics"), which is intended to
+  represent whether a given write is the currently-authoritative value on
+  its Product versus one that lost a later-arriving-but-earlier-timestamped
+  LWW conflict. **As implemented in Phase 5F, this field is insert-only,
+  not yet updatable:** the server always sets `accepted: true` at insert
+  time, and the endpoint rejects any client-supplied `accepted` key at
+  all (including an explicit `accepted: true` matching what the server
+  would set), using the same presence-based rejection pattern as
+  `Product.quantity` and `StockEvent.appliedQuantity`. No code path
+  currently updates an already-inserted event's `accepted` value. The
+  LWW-driven mutation described above — flipping an earlier write's
+  `accepted` to `false` once a later-timestamped write for the same
+  field arrives — is deferred to **Phase 6**, where it would become the
+  one narrowly-scoped exception to "events are never mutated." Until
+  then, do not read this bullet as describing current behavior.
 - `categories` / `locations` / `tags` / `units` — upserted by `entityId`,
   for the same reason as `products` above. Implemented in Phase 5C via one
   shared schema factory (`classificationModel.js`) producing four separate
@@ -669,6 +680,38 @@ rather than silently trusting it.
 containing `appliedQuantity` (any value, including a value that happens
 to match what the server would have computed) is rejected with
 `VALIDATION_ERROR`, never silently accepted or overwritten.
+
+### ProductChangeEvent persistence is validation-only (binding pattern, established Phase 5F)
+
+`PUT /api/product-change-events/:id` accepts an already-fully-constructed
+event from the client — the client builds `ProductChangeEvent` objects
+itself (comparing old/new Product state locally) and submits them as a
+separate sync operation from the corresponding `product` upsert. This
+endpoint's Product lookup exists **strictly to verify** that the
+referenced Product exists and is owned by the caller (`NOT_FOUND`
+otherwise, indistinguishable from "doesn't exist," consistent with every
+other cross-owner boundary in this project). It is binding that this
+lookup never goes further than that: it must not mutate the Product,
+must not compare the event's `oldValue`/`newValue` against the Product's
+actual current field values, and must not recompute or second-guess the
+change being recorded. A server that infers, diffs, or reconstructs a
+client-owned historical decision is the specific failure mode an earlier
+Phase 5D draft fell into (see that phase's own note above) and re-opening
+it here — even narrowly, even "just to double-check" — is out of scope
+for any future change to this endpoint unless explicitly re-litigated.
+
+**Idempotency check runs before the Product lookup**, for the same
+retry-safety reason as Phase 5E's stock-event ordering: if the Product
+lookup ran first, a retry of an event whose first attempt already
+succeeded — but whose referenced Product has since been deleted by an
+unrelated later action — would incorrectly fail with `NOT_FOUND` instead
+of returning the already-persisted event as a no-op. (An archived Product
+still exists and is still returned by this lookup — the lookup filters
+only on `{_id, ownerId}`, not `archived` — so archival alone does not
+trigger this scenario; only actual deletion does.)
+This is proven, not merely asserted, by a test that deletes the
+referenced Product after a successful first write and confirms a retry
+with the same event id still succeeds as a no-op.
 
 ## Sync model
 

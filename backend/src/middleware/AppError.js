@@ -10,6 +10,17 @@
 // itself may be perfectly well-formed; the caller is simply being
 // throttled), and reusing VALIDATION_ERROR for it was a genuine
 // mislabeling caught in review, not a stylistic preference.
+//
+// DUPLICATE_ENTITY removed during the Phase 5G hardening pass: a fresh
+// audit across every service found zero use sites -- every actual
+// duplicate/cross-owner-collision path (5C classifications, 5D products,
+// 5E stock events, 5F product-change-events) already correctly throws
+// CONFLICT. A dead member of a "closed, locked" vocabulary is exactly
+// the kind of unexplained artifact this project avoids elsewhere, so it
+// was removed rather than left for future archaeology to puzzle over.
+// If a future phase needs a distinct duplicate-entity semantic separate
+// from CONFLICT, it should be reintroduced deliberately, with a real use
+// site from the start.
 
 export const ERROR_CODES = Object.freeze({
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -19,7 +30,6 @@ export const ERROR_CODES = Object.freeze({
   CONFLICT: 'CONFLICT',
   QUANTITY_CONSISTENCY_CONFLICT: 'QUANTITY_CONSISTENCY_CONFLICT',
   ALREADY_REVERSED: 'ALREADY_REVERSED',
-  DUPLICATE_ENTITY: 'DUPLICATE_ENTITY',
   RATE_LIMITED: 'RATE_LIMITED',
   INTERNAL_ERROR: 'INTERNAL_ERROR'
 });
@@ -32,7 +42,6 @@ const DEFAULT_STATUS_BY_CODE = {
   CONFLICT: 409,
   QUANTITY_CONSISTENCY_CONFLICT: 409,
   ALREADY_REVERSED: 409,
-  DUPLICATE_ENTITY: 409,
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500
 };

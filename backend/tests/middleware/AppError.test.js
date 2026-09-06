@@ -38,7 +38,6 @@ describe('AppError', () => {
     assert.equal(new AppError('CONFLICT', 'x').status, 409);
     assert.equal(new AppError('QUANTITY_CONSISTENCY_CONFLICT', 'x').status, 409);
     assert.equal(new AppError('ALREADY_REVERSED', 'x').status, 409);
-    assert.equal(new AppError('DUPLICATE_ENTITY', 'x').status, 409);
     assert.equal(new AppError('RATE_LIMITED', 'x').status, 429);
     assert.equal(new AppError('INTERNAL_ERROR', 'x').status, 500);
   });
@@ -48,11 +47,14 @@ describe('AppError', () => {
     assert.equal(err.status, 418);
   });
 
-  test('ERROR_CODES is exactly the locked ten-code vocabulary', () => {
+  test('ERROR_CODES is exactly the locked nine-code vocabulary', () => {
+    // DUPLICATE_ENTITY removed in the Phase 5G hardening pass -- it had
+    // no use sites anywhere in the codebase; every real duplicate/
+    // collision path already correctly throws CONFLICT. See AppError.js's
+    // header comment for the full reasoning.
     assert.deepEqual(Object.keys(ERROR_CODES).sort(), [
       'ALREADY_REVERSED',
       'CONFLICT',
-      'DUPLICATE_ENTITY',
       'FORBIDDEN',
       'INTERNAL_ERROR',
       'NOT_FOUND',

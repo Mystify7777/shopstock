@@ -919,7 +919,7 @@ equivalent guard. Fixed the assertion and added a file-level
 
 Full suite at Phase 4 close: **24 test files, 689 tests, 0 failures.**
 
-## Phase 5 — Backend (Express + MongoDB + auth) — IN PROGRESS
+## Phase 5 — Backend (Express + MongoDB + auth) — ✅ COMPLETE (5A–5G)
 
 ### 5A — Backend Foundation ✅ COMPLETE
 
@@ -1627,12 +1627,192 @@ frontend untouched.
 
 ---
 
-### 5F–5G — NOT STARTED
+### 5F — ProductChangeEvent Persistence — ✅ COMPLETE AND FULLY VERIFIED
 
-Renumbered per the Phase 5D scope correction: `ProductChangeEvent`
-persistence (originally sketched as part of 5D) is its own slice, 5F,
-accepting already-constructed client-generated event payloads. 5G remains
-hardening + integration verification across the full Phase 5 surface.
+Renumbered per the Phase 5D scope correction (see 5D's entry above):
+`ProductChangeEvent` persistence, originally sketched as part of 5D, is
+its own slice here, accepting already-constructed client-generated event
+payloads rather than deriving them server-side.
+
+**The scope boundary this phase exists to hold:** the client already
+builds complete `ProductChangeEvent` objects locally
+(`productService.js`'s `buildChangeEvents()`, comparing old/new Product
+state against `TRACKED_FIELD_MAP`) as a separate sync operation
+(`entityType: 'productChangeEvent'`) before either it or the corresponding
+`product` sync entry reaches the server. This endpoint's job is strictly
+to **persist** that already-decided history, ownership-scoped and
+idempotent — never to independently diff, infer, or reconstruct what
+changed. An early draft of Phase 5D had briefly explored server-side
+diffing before this boundary was locked; 5F holds that line rather than
+reopening it.
+
+**Product lookup is validation-only, not a mutation trigger:**
+`PUT /api/product-change-events/:id` verifies the referenced Product
+exists and is owned by the caller (`NOT_FOUND` if not — "doesn't exist"
+and "exists under a different owner" are indistinguishable responses,
+consistent with every other cross-owner boundary in this project) but
+this lookup **never** mutates the Product, never compares `oldValue`/
+`newValue` against the Product's actual current field values, and never
+recomputes or second-guesses the change being recorded. The Product
+lookup exists solely to answer "is this a legitimate reference the caller
+is allowed to see," nothing more.
+
+**Idempotency check runs before the Product lookup — the same
+retry-safety reasoning as 5E's ordering, deliberately reused rather than
+re-derived:** if the idempotency check ran second, a retry of an event
+whose first attempt already succeeded — but whose referenced Product has
+since been deleted by an unrelated later action — would incorrectly fail
+with `NOT_FOUND` instead of returning the already-persisted event as a
+no-op. (Archival alone does not trigger this: the lookup filters only on
+`{_id, ownerId}`, not `archived`, so an archived-but-not-deleted Product
+still satisfies it.) Explicitly tested: the referenced Product is deleted
+*after* a successful first write, then a retry with the same event id is
+confirmed to still succeed as a no-op, proving the ordering rather than
+merely asserting it.
+
+**`accepted` — insert-only in this phase, not yet updatable:**
+`accepted` is always server-set to `true` at insert time. The endpoint
+rejects any client-supplied `accepted` key at all — including an explicit
+`accepted: true` that happens to match what the server would have set —
+using the same presence-based (`Object.hasOwn()`, not truthiness) guard
+pattern as `Product.quantity` (5D) and `StockEvent.appliedQuantity` (5E).
+No update path exists for `accepted` yet. Later-arriving-but-earlier-
+timestamped LWW conflict resolution, which could someday need to flip an
+already-inserted event's `accepted` to `false`, is explicitly deferred to
+**Phase 6** — this phase does not build toward it speculatively.
+(`ARCHITECTURE.md`'s MongoDB-schema description of `productChangeEvents`
+was found, during the Phase 5G hardening pass below, to have described
+this as if the update path already existed; corrected there.)
+
+**Timestamp validation:** `ProductChangeEvent.timestamp` reuses
+`stockEventValidation.js`'s exported date/timestamp validators directly
+(the client's own ported `dates.js` logic) rather than a second
+implementation — same reasoning as 5E: a bare `new Date()` check would
+silently accept malformed input and roll over impossible calendar dates.
+
+**Files:**
+- `src/models/productChangeEventModel.js` — `entityId`-as-`_id`,
+  insert-only, ownership-scoped, `accepted` defaults `true` at the schema
+  level (mirroring the service's own default, not a second source of
+  truth for it).
+- `src/services/productChangeEventValidation.js` — shape validation only;
+  re-exports/reuses `stockEventValidation.js`'s timestamp validators
+  rather than duplicating them.
+- `src/services/productChangeEventService.js` — idempotency check, then
+  ownership-scoped Product existence check (validation-only, per above),
+  then insert.
+- `src/controllers/productChangeEventController.js`,
+  `src/routes/productChangeEventRoutes.js` — thin, `requireAuth`-gated,
+  `GET /api/product-change-events` (`?productId=`) + `PUT /:id`.
+- `tests/productChangeEventRoutes.test.js` — 22 tests: basic persistence,
+  ownership isolation, cross-owner id collision (`CONFLICT`), the
+  idempotency-survives-deleted-Product retry test described above,
+  `accepted`-presence rejection (including the `accepted: true` case),
+  timestamp validation, listing.
+
+**Verified locally by the project owner, full backend suite passing
+(285/285).** Mongo-free baseline held at 75/75 throughout; frontend
+untouched (24 files, 689 tests, unaffected — no frontend files touched in
+5C–5F).
+
+---
+
+### 5G — Hardening / Integration Verification — ✅ COMPLETE
+
+**Explicit scope discipline, stated by the project owner and carried into
+this entry verbatim because it's the reason this phase is small:** *"We
+should not manufacture a 'hardening phase' full of random refactors
+because the roadmap happens to have a letter left."* 5G's job was to
+verify the claims made across Phases 5A–5F against the actual repository
+state — not to add new endpoints, resources, or speculative tests.
+
+**Pass 1 — fresh inspection, no assumptions carried over from prior
+session summaries.** Re-cloned the repository fresh, re-ran and
+re-confirmed both test baselines directly rather than trusting any
+document's stated numbers: **75/75 Mongo-free** (confirmable in-sandbox)
+and, separately, the **285/285 full-suite result the project owner had
+already confirmed locally, with real network access** — the sandbox
+itself did not and cannot run the Mongo-dependent suite (`fastdl.mongodb.org`
+returns `403` at the egress proxy, the same standing limitation noted in
+every phase since 5A). Inspected, file by file: every mounted route and
+its auth boundary, the ownership-isolation pattern at every service,
+the error vocabulary and its HTTP mapping against each locked contract,
+every use (and non-use) of a Mongoose transaction, timestamp-validation
+consistency, and cross-owner/auth-required test coverage across all
+seven resource test files.
+
+**Findings, categorized:**
+
+*Blocking correctness/security issues:* none found. No auth bypass, no
+cross-owner leak, no silent quantity/history corruption, no error-code
+misuse anywhere in the actual code.
+
+*Confirmed hardening gaps (the only three items 5G actually touched):*
+1. This file (`PROGRESS.md`) had not been updated when the 5F commit
+   landed — it still read "5F–5G — NOT STARTED" with a stale pre-5F test
+   count. Fixed by this very entry and the 5F entry above it.
+2. `ARCHITECTURE.md`'s `productChangeEvents` schema-section bullet
+   described `accepted` as already having an update path ("the one
+   exception to events-never-mutated"), which doesn't match the actual
+   5F implementation (insert-only, no update path, LWW deferred to Phase
+   6). Corrected, and a Phase 5F binding-pattern subsection was added
+   alongside the existing 5C/5D/5E ones, documenting the validation-only
+   Product lookup and the idempotency-before-lookup ordering as the
+   intentional retry guarantees they are, not implementation accidents.
+3. `DUPLICATE_ENTITY` existed in the locked error vocabulary
+   (`AppError.js`) with a full status mapping but had zero use sites
+   anywhere in the codebase — every actual duplicate/cross-owner-
+   collision path already correctly threw `CONFLICT`. Removed rather
+   than left as an unexplained dead member of a "closed, locked" set;
+   `AppError.test.js` updated to assert the resulting nine-code
+   vocabulary. If a future phase needs a distinct duplicate-entity
+   semantic, it should be reintroduced deliberately, with a real use site
+   from the start, not resurrected by guessing what the unused constant
+   "probably meant."
+
+*Documentation drift:* the two items above are the only instances found;
+no further drift located in `ARCHITECTURE.md`'s other Phase 5 sections
+(5C/5D/5E's binding-pattern write-ups were checked line-by-line against
+the actual code and match closely).
+
+*Explicitly verified as correct, not touched:* ownership isolation
+(`{_id, ownerId}` filter pattern, universal across all four
+client-generated-`entityId` services); transaction scoping (5E's
+`stockEventService.js` remains the sole session/transaction user in the
+entire backend, confirmed by grep, not assumed); error-envelope
+consistency (`{error:{code,message}}`, one central `errorHandler.js`,
+`Object.hasOwn()` used throughout, not `in`); the insert-only enforcement
+model for `StockEvent`/`ProductChangeEvent` (zero stray `update`/
+`updateMany` calls outside the two documented exceptions in
+`stockEventService.js`); cross-owner and auth-required test coverage,
+present and consistent across all seven resource test files; the
+frontend/backend timestamp validator parity (`stockEventValidation.js`'s
+logic compared directly against `dates.js` and confirmed to be a genuine
+port, not a re-derivation).
+
+**Files touched:**
+- `backend/src/middleware/AppError.js` — `DUPLICATE_ENTITY` removed from
+  `ERROR_CODES` and `DEFAULT_STATUS_BY_CODE`; header comment updated to
+  record the removal and why, consistent with this project's practice of
+  logging corrections rather than silently rewriting history.
+- `backend/tests/middleware/AppError.test.js` — removed the
+  `DUPLICATE_ENTITY` status assertion; updated the vocabulary-count test
+  to the resulting nine codes.
+- `docs/ARCHITECTURE.md` — corrected `productChangeEvents.accepted`
+  description; added the Phase 5F binding-pattern subsection.
+- `docs/PROGRESS.md` — this entry, plus the 5F entry above it.
+
+**No endpoints, resources, indexes, or transactions were added or
+changed. No speculative tests were added** — Pass 1's coverage audit
+found no genuine gaps in cross-owner or auth-required test coverage, so
+nothing else was in scope.
+
+**Verification:** Mongo-free suite re-run after the `AppError.js` change,
+still **75/75, 0 failures**. Mongo-dependent test files were checked by
+inspection (grep) for any `DUPLICATE_ENTITY` reference — none found — and
+remain unverified-in-sandbox per the standing limitation; genuine
+pass/fail confirmation for those requires the project owner running
+locally, same as every phase since 5A.
 
 ## Phase 6 — Sync engine — NOT STARTED
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
