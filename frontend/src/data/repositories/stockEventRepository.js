@@ -97,22 +97,51 @@ export class ReversalReferenceError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the syncQueue insert entry for a stock event.
+ * Build the syncQueue insert entry for a committed stock event.
  *
  * entityId = event.id   (stable document identity)
  * clientId = event.id   (safe: insert-only, one event = one immutable record)
  *
- * appliedQuantity is MANDATORY in the payload — without it, a device that
- * receives this event via sync cannot correctly reverse a clamped
- * over-removal. See docs/ARCHITECTURE.md AMENDMENT on appliedQuantity.
+ * The queued payload carries both appliedQuantity AND
+ * expectedCurrentQuantity -- two storage-layer fields the domain
+ * StockEvent shape itself does not have:
+ *
+ *   appliedQuantity          the true applied delta (see the header
+ *                            comment's AMENDMENT) -- MANDATORY in the
+ *                            payload: without it, a device that receives
+ *                            this event via sync cannot correctly
+ *                            reverse a clamped over-removal, on this
+ *                            device or any device that receives this
+ *                            event via sync.
+ *
+ *   expectedCurrentQuantity  the Product.quantity value this operation
+ *                            was committed against -- the exact value
+ *                            observed at commit time (see commit()'s own
+ *                            parameter of the same name), captured here
+ *                            once and never recomputed. The Phase 5
+ *                            backend's PUT /api/stock-events/:id
+ *                            endpoint requires this field on every
+ *                            request; a retry must resend the SAME
+ *                            queued value, not a freshly-read current
+ *                            quantity -- re-reading at retry time would
+ *                            silently change what the request is
+ *                            asserting and defeat the backend's own
+ *                            idempotency-before-consistency-check
+ *                            ordering (see docs/ARCHITECTURE.md,
+ *                            StockEvent transaction ordering).
+ *
+ * createSyncRequest() (frontend/src/data/sync/syncRequest.js) is what
+ * strips appliedQuantity back off before the value ever reaches the
+ * wire -- that stripping is a transport concern, not a queue-production
+ * concern, which is why both fields are deliberately kept here.
  */
-function buildStockEventSyncEntry(event, appliedQuantity) {
+function buildStockEventSyncEntry(event, appliedQuantity, expectedCurrentQuantity) {
   return {
     entityType: 'stockEvent',
     operation: 'insert',
     entityId: event.id,
     clientId: event.id,
-    payload: { ...event, appliedQuantity },
+    payload: { ...event, appliedQuantity, expectedCurrentQuantity },
     attempts: 0,
     status: 'pending',
     createdAt: timestampNow(),
@@ -271,8 +300,12 @@ export function createStockEventRepository(db) {
         // 4. Update the materialized product quantity
         await db.products.put({ ...product, quantity: nextQuantity });
 
-        // 5. Enqueue the stockEvent sync entry (appliedQuantity in payload)
-        await db.syncQueue.add(buildStockEventSyncEntry(event, appliedQuantity));
+        // 5. Enqueue the stockEvent sync entry (appliedQuantity +
+        //    expectedCurrentQuantity in payload -- both storage-layer
+        //    fields, neither on the domain StockEvent shape)
+        await db.syncQueue.add(
+          buildStockEventSyncEntry(event, appliedQuantity, expectedCurrentQuantity)
+        );
 
         // 6. Enqueue the product state sync entry (fresh clientId)
         await db.syncQueue.add(buildProductSyncEntry(product, nextQuantity));
@@ -400,9 +433,10 @@ export function createStockEventRepository(db) {
         // 7. Update the materialized product quantity
         await db.products.put({ ...product, quantity: nextQuantity });
 
-        // 8. Enqueue the reversal event sync entry (appliedQuantity in payload)
+        // 8. Enqueue the reversal event sync entry (appliedQuantity +
+        //    expectedCurrentQuantity in payload)
         await db.syncQueue.add(
-          buildStockEventSyncEntry(reversalEvent, appliedQuantity)
+          buildStockEventSyncEntry(reversalEvent, appliedQuantity, expectedCurrentQuantity)
         );
 
         // 9. Enqueue the product state sync entry (fresh clientId)

@@ -17,6 +17,7 @@ import {
 } from '../../domain/stock/stockEventFactory.js';
 import { applyStockEvent } from '../../domain/stock/applyStockEvent.js';
 import { createReversalEvent } from '../../domain/stock/reversal.js';
+import { createSyncRequest } from '../sync/syncRequest.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -345,6 +346,119 @@ describe('stockEventRepository', () => {
       expect(entry.status).toBe('pending');
       expect(entry.attempts).toBe(0);
       expect(entry.lastError).toBeNull();
+    });
+
+    it('stockEvent sync entry payload contains the exact expectedCurrentQuantity observed at commit time', async () => {
+      // This is the producer-boundary guarantee: expectedCurrentQuantity
+      // must be captured from the Product.quantity this operation was
+      // actually committed against, and persisted verbatim into the
+      // queued payload -- not left absent, and not something a later
+      // sync step would need to (re-)derive.
+      const product = await seedProduct(db, { quantity: 12 });
+      const event = makeAddEvent(product.id, 10);
+      const { nextQuantity, appliedQuantity } = applyStockEvent(product.quantity, event);
+      await repo.commit({
+        event,
+        appliedQuantity,
+        nextQuantity,
+        expectedCurrentQuantity: product.quantity,
+        product,
+      });
+
+      const entry = (await db.syncQueue.toArray())
+        .find(e => e.entityType === 'stockEvent');
+      expect(entry.payload.expectedCurrentQuantity).toBe(12);
+    });
+
+    it('stockEvent sync entry payload retains appliedQuantity alongside expectedCurrentQuantity', async () => {
+      // Both fields must coexist in the queue payload -- one is the
+      // storage-layer field needed for a later local/cross-device
+      // reversal, the other is the backend's required consistency
+      // check on the wire. Stripping appliedQuantity for transport is
+      // createSyncRequest()'s job (see the pipeline test below), not
+      // something the queue producer should do.
+      const product = await seedProduct(db, { quantity: 7 });
+      const event = makeAddEvent(product.id, 3);
+      const { nextQuantity, appliedQuantity } = applyStockEvent(product.quantity, event);
+      await repo.commit({
+        event,
+        appliedQuantity,
+        nextQuantity,
+        expectedCurrentQuantity: product.quantity,
+        product,
+      });
+
+      const entry = (await db.syncQueue.toArray())
+        .find(e => e.entityType === 'stockEvent');
+      expect(entry.payload.appliedQuantity).toBe(appliedQuantity);
+      expect(entry.payload.expectedCurrentQuantity).toBe(7);
+    });
+
+    it('reversal sync entry payload also contains the expectedCurrentQuantity observed at reversal-commit time', async () => {
+      // Same producer-boundary guarantee applies to commitReversal(),
+      // which shares buildStockEventSyncEntry() with commit().
+      //
+      // Uses a genuine over-removal: 5 available, REMOVE 8 requested, so
+      // appliedQuantity clamps to 5 (matching the documented reversal
+      // invariant 0 < appliedQuantity <= originalEvent.quantity) rather
+      // than a degenerate all-the-way-to-zero case.
+      const product = await seedProduct(db, { quantity: 5 });
+      const original = makeRemoveEvent(product.id, 8); // over-removal: clamps to 5
+      const { appliedQuantity: originalApplied, nextQuantity: afterRemoval } =
+        applyStockEvent(product.quantity, original);
+      await repo.commit({
+        event: original,
+        appliedQuantity: originalApplied,
+        nextQuantity: afterRemoval,
+        expectedCurrentQuantity: product.quantity,
+        product,
+      });
+
+      const productAfterRemoval = { ...product, quantity: afterRemoval };
+      const { reversalEvent, errors } = createReversalEvent(original, originalApplied);
+      expect(errors).toEqual([]);
+      const { appliedQuantity: reversalApplied, nextQuantity: reversalNext } =
+        applyStockEvent(productAfterRemoval.quantity, reversalEvent);
+
+      await repo.commitReversal({
+        reversalEvent,
+        appliedQuantity: reversalApplied,
+        originalEventId: original.id,
+        nextQuantity: reversalNext,
+        expectedCurrentQuantity: productAfterRemoval.quantity,
+        product: productAfterRemoval,
+      });
+
+      const reversalEntry = (await db.syncQueue.toArray())
+        .filter(e => e.entityType === 'stockEvent')
+        .find(e => e.entityId === reversalEvent.id);
+      expect(reversalEntry.payload.expectedCurrentQuantity).toBe(afterRemoval);
+      expect(reversalEntry.payload.appliedQuantity).toBe(reversalApplied);
+    });
+
+    it('full producer-to-wire pipeline: the real queued payload survives createSyncRequest() with expectedCurrentQuantity preserved and appliedQuantity stripped', async () => {
+      // This is the end-to-end proof the Phase 6A review specifically
+      // asked for: not a hand-built fixture payload, but the ACTUAL
+      // queue entry produced by a real commit(), fed through the real
+      // createSyncRequest() translator.
+      const product = await seedProduct(db, { quantity: 20 });
+      const event = makeAddEvent(product.id, 5);
+      const { nextQuantity, appliedQuantity } = applyStockEvent(product.quantity, event);
+      await repo.commit({
+        event,
+        appliedQuantity,
+        nextQuantity,
+        expectedCurrentQuantity: product.quantity,
+        product,
+      });
+
+      const queuedEntry = (await db.syncQueue.toArray())
+        .find(e => e.entityType === 'stockEvent');
+
+      const { body } = createSyncRequest(queuedEntry);
+
+      expect(body.expectedCurrentQuantity).toBe(20);
+      expect(Object.hasOwn(body, 'appliedQuantity')).toBe(false);
     });
 
     it('product sync entry has correct shape with fresh clientId', async () => {
