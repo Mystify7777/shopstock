@@ -1814,8 +1814,238 @@ remain unverified-in-sandbox per the standing limitation; genuine
 pass/fail confirmation for those requires the project owner running
 locally, same as every phase since 5A.
 
-## Phase 6 — Sync engine — NOT STARTED
-## Phase 7 — Dashboard + classification management UI — NOT STARTED
+## Phase 6 — Sync engine — IN PROGRESS
+
+### Pass 1 — Repository investigation — ✅ COMPLETE
+
+Investigation-only pass, no implementation, per the locked instruction
+for this pass. Re-confirmed HEAD (`b4eedf2`) and both test baselines
+fresh from source rather than trusting any prior document — Mongo-free
+backend **75/75**, frontend **689/689** at the time of this pass (before
+Phase 6A's new tests existed).
+
+Established, from direct repository evidence, not from architectural
+memory:
+
+- **What already exists:** the Dexie `syncQueue` table; all four
+  repositories (`classificationRepository.js`, `productRepository.js`,
+  `stockEventRepository.js`, and `productRepository.js`'s
+  `ProductChangeEvent` builder) enqueue atomically alongside their local
+  domain writes; the `entityId`/`clientId` conventions documented above
+  were already correctly implemented in code.
+- **What does not exist at all, confirmed by repo-wide search:** any
+  sync processor/queue-drain loop, any HTTP client (zero `fetch`/`axios`/
+  `XMLHttpRequest` matches anywhere in `frontend/src`), any retry/backoff
+  logic, any `navigator.onLine`/online-event listener, any startup- or
+  connectivity-triggered sync, any status transition on a queue row
+  (`attempts`/`status`/`lastError` are written once as `0`/`'pending'`/
+  `null` and never touched again by any code path), and any frontend
+  authentication/token handling (`frontend/src/api/`,
+  `frontend/src/auth/`, and `frontend/src/data/sync/` were all
+  confirmed-empty directories at the start of this pass).
+- **Three real wire-contract gaps**, confirmed by reading the actual
+  backend validators against the actual queued payloads (not assumed):
+  the `product` queue payload always carries `quantity`, which the
+  backend rejects by presence unconditionally; the `stockEvent` queue
+  payload carried `appliedQuantity` (which the backend also rejects by
+  presence) but was missing the backend-required `expectedCurrentQuantity`
+  entirely; the `productChangeEvent` queue payload always carries
+  `accepted: true`, which the backend rejects by presence unconditionally.
+  These became Phase 6A's scope.
+- **The `reversedBy` sync gap — flagged here, later confirmed NOT a real
+  gap:** at the time of this investigation pass, reversing a stock event
+  appeared to patch the original event's `reversedBy` field locally with
+  no corresponding `syncQueue` entry for that patch, and the repository's
+  own code comments described this as an intentionally-flagged open
+  Phase 6 decision. **Phase 6B0's cross-boundary verification (below)
+  traced both sides together and found this was a false alarm** — the
+  backend's existing reversal transaction (built independently, in Phase
+  5E) already derives and persists `original.reversedBy` from the
+  reversal event's own `reversalOf` field, atomically, with no separate
+  request needed. This entry is left as originally written, with this
+  correction appended, rather than rewritten, per this project's practice
+  of logging corrections explicitly instead of silently editing history.
+- **LWW / `accepted` semantics:** confirmed documented-only, matching the
+  Phase 5F/5G findings — no code, client or server, currently compares
+  timestamps or mutates an already-inserted `accepted` value.
+
+Full findings recorded in the Pass 1 investigation report (see project
+history); not reproduced in full here to avoid duplicating the same
+narrative in two places — this entry captures what carried forward into
+Phase 6A's locked scope.
+
+### Phase 6A — Sync wire-contract repair — ✅ COMPLETE
+
+Scope, locked before implementation: fix the three wire-contract
+mismatches Pass 1 found, and only those — no queue draining, no HTTP
+client, no retries, no auth, no network listeners, no conflict
+resolution, no LWW, no `reversedBy` synchronization. Deliberately framed
+as "make the existing queue payload translatable into a backend-valid
+request," not "build the sync engine."
+
+**Design decision, made explicitly before implementation:** local
+storage keeps carrying `quantity` (Product), `appliedQuantity`
+(StockEvent), and `accepted` (ProductChangeEvent) exactly as before —
+these fields are needed for local correctness (reversal, audit display)
+independent of sync. Rather than mutate what repositories persist, a new
+shared module owns the local-to-wire translation as its own concern:
+
+```
+syncQueue entry → createSyncRequest(entry) → { method, path, body }
+```
+
+**`frontend/src/data/sync/syncRequest.js`** (new file) — owns entity-type
+routing (all seven queue entity types), HTTP method mapping (every
+current Phase 5 write endpoint is `PUT /:id`), endpoint-path construction
+keyed by `entityId`, and wire-payload serialization: strips `quantity`
+from `product` bodies, strips `appliedQuantity` from `stockEvent` bodies
+while preserving `expectedCurrentQuantity`, strips `accepted` from
+`productChangeEvent` bodies, and passes classification payloads through
+unchanged (confirmed to need no stripping). Deliberately contains no
+`fetch`/HTTP execution, no queue-processing, no retry logic — verified by
+direct grep as part of this phase's completion gate, not merely stated.
+Unknown `entityType` throws `UnknownSyncEntityTypeError` rather than
+silently producing a malformed request. Never mutates the queue entry or
+its payload — every serializer returns a new object.
+
+**A second, more subtle gap surfaced and fixed during implementation, not
+part of the original Pass 1 list:** the `stockEvent` queue *producer*
+(`stockEventRepository.js`'s `buildStockEventSyncEntry()`) never included
+`expectedCurrentQuantity` in the payload it built in the first place —
+so the serializer alone had nothing real to preserve. Traced to source:
+`expectedCurrentQuantity` was already a parameter of both `commit()` and
+`commitReversal()` (used for the local optimistic-concurrency check
+against the just-read `Product.quantity`), simply never threaded into
+the sync-entry builder. Fixed by adding it as a third parameter to
+`buildStockEventSyncEntry()` and passing it through at both call sites —
+`commit()`'s ordinary path and `commitReversal()`'s reversal path both
+now capture and queue the exact value observed at commit time, never
+recomputed on retry.
+
+**Files changed:**
+- `frontend/src/data/sync/syncRequest.js` — new, ~200 lines.
+- `frontend/src/data/sync/syncRequest.test.js` — new, 29 tests: routing
+  for all seven entity types, classification pass-through, product/
+  stockEvent/productChangeEvent stripping and field-preservation
+  (including falsy/null/zero edge values), whole-entry no-mutation,
+  unknown-entityType handling.
+- `frontend/src/data/repositories/stockEventRepository.js` —
+  `buildStockEventSyncEntry()` gained the `expectedCurrentQuantity`
+  parameter; both call sites updated.
+- `frontend/src/data/repositories/stockEventRepository.test.js` — 4 new
+  tests, purely additive: `commit()`'s queue entry carries the exact
+  `expectedCurrentQuantity` observed at commit time; that entry also
+  retains `appliedQuantity` alongside it; `commitReversal()`'s queue
+  entry carries the same guarantee (proven via a genuine over-removal/
+  clamp scenario, not a degenerate case); and a full producer-to-wire
+  pipeline test — a *real* `commit()` call, its *real* resulting queue
+  row pulled from `db.syncQueue`, fed through the *real*
+  `createSyncRequest()` — confirming `expectedCurrentQuantity` survives
+  and `appliedQuantity` is stripped. This last test exists specifically
+  because an earlier round of this phase's own tests had only proven the
+  serializer's stripping/preservation logic against hand-built fixtures
+  that already contained `expectedCurrentQuantity` — which verified the
+  serializer but not the actual producer, and did not catch the producer
+  gap on its own. Caught in review, not self-caught; recorded here rather
+  than silently absorbed.
+
+**Verification:** frontend suite **722/722** (previous baseline 689 +
+29 new `syncRequest.test.js` + 4 new `stockEventRepository.test.js`
+tests, zero regressions); backend Mongo-free **75/75**, unaffected (no
+backend files touched in this phase). `git diff --check` clean on every
+touched/new file; all confirmed LF-only.
+
+**Explicitly out of scope, confirmed absent by this phase's own
+completion-gate grep (no `fetch`/`XMLHttpRequest`/`axios`/timers/network
+listeners in the new module):** HTTP execution, queue draining, retries/
+backoff, network listeners, authentication, conflict resolution, LWW.
+All remain open for later Phase 6 passes. (`reversedBy` synchronization
+was also listed here at the time this phase closed; Phase 6B0, directly
+below, subsequently determined it was never actually open — see that
+entry for the full trace.)
+
+### Phase 6B0 — Reversal synchronization cross-boundary verification — ✅ COMPLETE
+
+**Investigation-only pass, no implementation** — scoped specifically to
+resolve the `reversedBy` sync question Pass 1 and Phase 6A had both
+flagged (based on the frontend repository's own code comments) but
+neither had verified against the backend side.
+
+**The question this pass actually answered, reframed from an initial
+"which of two designs should we build" framing to the more useful "does
+a gap exist at all":** does the existing reversal `stockEvent` queue
+entry, once it syncs through the normal `PUT /api/stock-events/:id`
+path, already give the backend everything it needs to derive and persist
+`original.reversedBy`, with no new queue-entry type required?
+
+**Traced the complete chain from fresh source, both sides together:**
+- `createReversalEvent()` (`frontend/src/domain/stock/reversal.js`)
+  sets `reversalEvent.reversalOf = originalEvent.id` at construction —
+  confirmed present on the domain event from the start, not something
+  the repository has to add.
+- `commitReversal()`'s `buildStockEventSyncEntry()` call spreads the
+  full reversal event (including `reversalOf`) into the queue payload,
+  alongside `appliedQuantity` and `expectedCurrentQuantity`.
+- `createSyncRequest()`'s `serializeStockEventBody()` strips only
+  `appliedQuantity` — `reversalOf` and `expectedCurrentQuantity` pass
+  through to the wire request unchanged.
+- `stockEventValidation.js`'s `assertValidStockEventPayload()` reads and
+  normalizes `reversalOf` from the request body (does not reject it).
+- `stockEventService.js`'s `processEvent()` — **Step 4** loads the
+  original event by `validated.reversalOf`, validates the three reversal
+  invariants (same product, opposite type, quantity matches the
+  original's `appliedQuantity`); **Step 8** — reached only after the
+  reversal event itself is successfully inserted — sets
+  `originalEvent.reversedBy = urlId` (the reversal event's own id) via
+  `StockEventModel.updateOne()`, in the **same transaction/session** as
+  the reversal event's insert and the product quantity update.
+
+**Retry/idempotency, traced explicitly:** Step 1 of `processEvent()`
+(idempotency check on `{_id: urlId, ownerId}`) runs before Step 4-8 on
+every request, including retries. A dropped-response retry of an
+already-succeeded reversal returns the existing event immediately and
+never re-reaches the reversal validation or the `reversedBy` patch — so
+a retry cannot create a duplicate reversal, corrupt `reversedBy`, or fail
+on a stale `expectedCurrentQuantity`.
+
+**Verdict: CONFIRMED SUFFICIENT.** No implementation changes were made.
+The reversal `stockEvent` queue entry, as it already exists post-6A, is
+the complete synchronization operation — the backend derives the
+`reversedBy` relationship server-side from `reversalOf`, atomically and
+idempotently, with no separate queue-entry type, no client-side
+`reversedBy` patch synchronization, and no additional backend work
+needed.
+
+**Files changed — documentation-only correction, no logic changed:**
+- `frontend/src/data/repositories/stockEventRepository.js` — the file
+  header and `commitReversal()`'s own JSDoc both described remote
+  `reversedBy` convergence as "a Phase 6 decision, explicitly deferred"
+  and "NOT addressed by a separate sync queue entry" — accurate about
+  what the repository itself does, but misleading about whether that was
+  a gap. Corrected to state plainly that this was verified sufficient by
+  Phase 6B0, with a pointer to this entry.
+- `docs/PROGRESS.md` — the Pass 1 entry's `reversedBy` bullet corrected
+  with an appended note (left in place rather than rewritten, per this
+  project's practice of logging corrections rather than silently editing
+  history) plus this new entry; the stale "all remain open" claim at the
+  end of the Phase 6A entry corrected.
+- `docs/ARCHITECTURE.md` — no changes were needed; it never described
+  `reversedBy` as an open Phase 6 gap in the first place (the misleading
+  framing existed only in the repository's own code comments and in
+  `PROGRESS.md`'s Pass 1 entry).
+
+**Verification:** no domain/repository/sync logic changed, so no test
+re-run was required for correctness; the existing 722/722 frontend and
+75/75 backend Mongo-free baselines are unaffected. `git diff --check`
+clean; touched files confirmed LF-only.
+
+**Planning impact:** the roadmap simplifies — there is no separate
+"reversal convergence implementation" milestone. The next real dependency
+is frontend authentication (Phase 6B1: contract investigation, before any
+implementation), since every Phase 5 sync target endpoint requires
+`requireAuth` and the frontend currently has no token/session handling at
+all.
+
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 
 ---

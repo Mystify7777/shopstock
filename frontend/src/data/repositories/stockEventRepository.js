@@ -21,8 +21,17 @@
 //   - validating business fields (quantity > 0, appliedQuantity range, etc.)
 //     — those invariants are enforced by the domain layer
 //   - sync queue processing, retries, or network (sync engine, Phase 6)
-//   - remote synchronization of the reversedBy pointer (Phase 6 decision,
-//     explicitly deferred — see docs/ARCHITECTURE.md)
+//
+// Remote convergence of the reversedBy pointer: this file creates NO
+// separate sync queue entry for the local reversedBy patch (step 6 in
+// commitReversal() below) — this was originally flagged as an open
+// Phase 6 decision, but Phase 6B0's cross-boundary verification (see
+// docs/PROGRESS.md) confirmed this is CORRECT, not a gap. The reversal
+// StockEvent queue entry already carries reversalOf; the backend's
+// PUT /api/stock-events/:id transaction derives and persists the
+// original event's reversedBy from that field atomically, in the same
+// transaction as the reversal event's own insert, with no separate
+// request or queue entry required.
 //
 // See docs/ARCHITECTURE.md:
 //   "Stock-event commit atomicity"
@@ -338,9 +347,12 @@ export function createStockEventRepository(db) {
    * re-checks reversedBy, catching any concurrent reversal that may have
    * occurred between the service's canBeReversed() check and this commit.
    *
-   * Remote sync of the reversedBy pointer is a Phase 6 decision — see
-   * docs/ARCHITECTURE.md. It is NOT addressed by a separate sync queue
-   * entry here.
+   * Remote convergence of the reversedBy pointer requires no separate
+   * sync queue entry here — confirmed by Phase 6B0's cross-boundary
+   * verification (see docs/PROGRESS.md). The reversal event's own queue
+   * entry carries reversalOf, which is sufficient for the backend's
+   * PUT /api/stock-events/:id transaction to derive and persist the
+   * original event's reversedBy atomically, server-side.
    *
    * Transaction tables: db.stockEvents, db.products, db.syncQueue
    *

@@ -773,15 +773,25 @@ Two mutation shapes, matching PRD §31/§32:
    server-side by `clientId` so re-delivery is a no-op — this is what
    makes the queue safe to retry after a dropped response. For a
    `stockEvent` entry specifically, the queued `payload` is the domain
-   event fields PLUS `appliedQuantity` — never the domain event alone.
-   This is a hard requirement, not an optimization: a `stockEvent` synced
-   without its `appliedQuantity` leaves any device that later receives it
-   via sync unable to correctly reverse a clamped over-removal, silently
-   reintroducing the inventory-inflation bug `appliedQuantity` exists to
-   prevent (see the "AMENDMENT" in the `Product.quantity` section above).
+   event fields PLUS `appliedQuantity` PLUS `expectedCurrentQuantity` —
+   never the domain event alone. Both are storage-layer fields, absent
+   from the domain `StockEvent` shape itself:
+   - `appliedQuantity` is a hard requirement, not an optimization: a
+     `stockEvent` synced without it leaves any device that later
+     receives it via sync unable to correctly reverse a clamped
+     over-removal, silently reintroducing the inventory-inflation bug
+     `appliedQuantity` exists to prevent (see the "AMENDMENT" in the
+     `Product.quantity` section above).
+   - `expectedCurrentQuantity` is the `Product.quantity` value the
+     operation was actually committed against, captured once at commit
+     time and never recomputed — the Phase 5 backend's
+     `PUT /api/stock-events/:id` requires it on every request, and a
+     retry must resend the exact originally-captured value (see
+     "Phase 6A — sync wire-contract repair" below).
    The repository that builds this queue entry is responsible for
-   including it every time, and repository tests must assert this
-   explicitly.
+   including both fields every time, and repository tests must assert
+   this explicitly — confirmed as a real, previously-missing gap during
+   Phase 6 Pass 1 and fixed in Phase 6A.
 2. **State** (`Product`, `Category`, `Location`, `Tag`, `Unit`): queued
    with `operation: 'upsert'`, `entityId = <entity>.id`, `clientId` freshly
    generated per entry (see "entityId vs. clientId" above — never reused
@@ -790,12 +800,69 @@ Two mutation shapes, matching PRD §31/§32:
    that loses the comparison is *not* discarded — the client that lost
    still has a `ProductChangeEvent` recording what it tried to set (with
    `accepted: false`), per PRD §32 ("the earlier change should remain
-   represented in product-change history").
+   represented in product-change history"). **This LWW comparison and the
+   `accepted: false` write-back are design intent, not yet built** — see
+   the Phase 5F entry in `PROGRESS.md` and "Phase 6A" below for the
+   current, verified state of `accepted`.
 
-The sync engine drains the queue in order, retries with backoff on failure,
-and marks entries `done` only after a confirmed server response. Querying
-"has event X synced yet" is answered by looking up its `syncQueue` entry by
-`entityId`, not by reading a field on the event itself.
+**The sync engine itself — the component that would drain this queue in
+order, retry with backoff on failure, and mark entries `done` after a
+confirmed server response — does not exist yet.** This paragraph
+describes the intended eventual behavior, confirmed absent by a direct
+repository search during Phase 6 Pass 1 (no queue processor, no retry
+logic, no `status` transition anywhere in the codebase — every queue
+entry is written once as `pending` and never touched again). Do not read
+this section as describing current behavior. Querying "has event X synced
+yet" would eventually be answered by looking up its `syncQueue` entry by
+`entityId`, not by reading a field on the event itself — but nothing
+currently performs that query either.
+
+### Sync wire-request translation — `syncRequest.js` (Phase 6A)
+
+Before a queue entry can be sent anywhere, its local representation must
+be translated into a request the Phase 5 backend will actually accept.
+Phase 6 Pass 1's audit found — and Phase 6A fixed — three real mismatches
+between what repositories queue locally and what each backend endpoint's
+validator requires:
+
+| entityType | queued locally | backend requires/rejects |
+|---|---|---|
+| `product` | includes `quantity` | rejects `quantity` by presence, always (`assertNoQuantityInPayload`) |
+| `stockEvent` | includes `appliedQuantity`; was missing `expectedCurrentQuantity` | rejects `appliedQuantity` by presence, always (`assertNoAppliedQuantityInPayload`); requires `expectedCurrentQuantity` |
+| `productChangeEvent` | includes `accepted: true` | rejects `accepted` by presence, always, including `true` (`assertNoAcceptedInPayload`) |
+
+The fix is deliberately **not** to change what repositories persist
+locally — `quantity`, `appliedQuantity`, and `accepted` all remain in the
+queue entry's `payload` exactly as before, because local reversal
+correctness and local audit display both need them. Instead,
+`frontend/src/data/sync/syncRequest.js` exports one pure function:
+
+```js
+createSyncRequest(entry) → { method, path, body }
+```
+
+It owns entity-type routing, HTTP method mapping, endpoint-path
+construction (always keyed by `entityId`, never `clientId`), and
+wire-payload serialization — stripping exactly the three fields above for
+their respective entity types, passing classification payloads through
+unchanged (confirmed to already match their backend contract, no
+stripping needed), and leaving `expectedCurrentQuantity` untouched so a
+retry resends the exact value captured at commit time rather than a
+freshly-read one. It does not execute HTTP requests, drain the queue,
+retry, or make any conflict-resolution decision — those remain later
+Phase 6 passes. It never mutates the queue entry or its payload; it only
+reads and returns a new object.
+
+**Reversal convergence note (Phase 6B0):** a reversal `stockEvent` queue
+entry needs no special handling beyond the above — it carries
+`reversalOf` like any other field, unstripped, and the backend's
+`PUT /api/stock-events/:id` transaction (see "StockEvent transaction
+ordering" above) derives and persists the original event's `reversedBy`
+from that field server-side, atomically with the reversal event's own
+insert. This was verified end-to-end from source, not assumed; see
+`docs/PROGRESS.md`'s Phase 6B0 entry for the full trace. No separate
+queue-entry type or client-side `reversedBy` synchronization exists or is
+needed.
 
 ## Photo storage — provider abstraction
 
