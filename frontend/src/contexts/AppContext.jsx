@@ -14,7 +14,8 @@ const AppContext = createContext(null);
 
 /**
  * @param {{ children: React.ReactNode, services: object }} props
- *   services shape: { productService, stockEventService, classificationRepository }
+ *   services shape: { productService, stockEventService,
+ *   classificationRepository, authManager, apiClient }
  */
 export function AppProvider({ children, services }) {
   return (
@@ -25,7 +26,13 @@ export function AppProvider({ children, services }) {
 }
 
 /**
- * @returns {{ productService: object, stockEventService: object, classificationRepository: object }}
+ * @returns {{
+ *   productService: object,
+ *   stockEventService: object,
+ *   classificationRepository: object,
+ *   authManager: ReturnType<import('../auth/authManager.js').createAuthManager>,
+ *   apiClient: ReturnType<import('../auth/apiClient.js').createApiClient>,
+ * }}
  * @throws {Error} if called outside an AppProvider
  */
 export function useAppContext() {
