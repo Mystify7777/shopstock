@@ -731,10 +731,61 @@ SyncQueueEntry
   clientId          string (unique identity of THIS mutation/sync
                     operation — see "entityId vs. clientId" below)
   attempts          number
-  status             'pending' | 'syncing' | 'done' | 'failed'
+  status             'pending' | 'processing' | 'failed'
   createdAt          ISO datetime
   lastError           string | null
 ```
+
+**Status vocabulary corrected, Phase 6C.** An earlier draft of this table
+(written before any producer or processor existed) specified
+`'pending' | 'syncing' | 'done' | 'failed'`. Phase 6C's contract
+investigation found every actual producer writes only `'pending'`, and
+that `'syncing'`/`'done'` had never been implemented anywhere — this was
+a documented-but-unimplemented design, not an absent one. The vocabulary
+above is what Phase 6C actually implements, corrected here rather than
+implemented divergently from what the doc said. `'syncing'` is replaced
+by the clearer `'processing'`; `'done'` is removed entirely because a
+successfully transmitted entry is **deleted**, not retained in a
+terminal state — see the lifecycle below for why deletion is safe.
+
+**Queue lifecycle:**
+
+```
+pending → processing → delete on successful transmission
+pending/processing → failed on permanent payload rejection
+```
+
+- `pending`: eligible for processing.
+- `processing`: currently owned by the processor, persisted (not just
+  held in memory) specifically so a browser/tab crash mid-request leaves
+  a durable trace — see crash recovery below.
+- `failed`: permanently rejected (a deterministic 4xx other than
+  408/429) and retained, with `lastError` populated, so the mutation
+  isn't silently lost. A `failed` entry is excluded from further
+  automatic processing until a later, explicitly-defined recovery
+  mechanism changes its state — Phase 6C does not implement that
+  mechanism, only the state that a future recovery pass would act on.
+- No `done` state: successful entries are deleted outright, not marked
+  and retained. The queue is a transient outbox, not a durable sync log.
+
+**Crash recovery:** on processor startup, any entry still marked
+`processing` from a previous run (the tab/browser closed or crashed
+mid-request, before the entry could be deleted or marked `failed`) is
+reset to `pending` before normal FIFO processing resumes.
+
+**Delivery model:** the sync queue provides **at-least-once delivery**,
+not exactly-once. Successful transmission followed by a local crash
+before the queue row is deleted can cause a retransmission on the next
+drain. This is safe because of how each operation type is idempotent:
+`upsert` operations (`product`/`category`/`location`/`tag`/`unit`)
+converge to the same state no matter how many times the same payload is
+resent, with no explicit dedup check needed; `stockEvent` and
+`productChangeEvent` operations are insert-only and rely on the
+backend's `clientId`-keyed idempotency check (Phase 5E/5F, re-verified
+for the reversal case in Phase 6B0) to treat a redelivery as a no-op
+rather than reapplying the mutation. Exactly-once delivery across a
+crash between server acceptance and local queue deletion cannot be
+guaranteed, and Phase 6C does not attempt to guarantee it.
 
 ### `entityId` vs. `clientId`
 

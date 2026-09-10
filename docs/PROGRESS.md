@@ -2124,6 +2124,173 @@ retry-after-refresh per request, not an unbounded loop), the exact
 (an expired/unrefreshable session must not be treated as "log the user
 out of the local app" — local data stays usable per PRD §34/§35).
 
+**All items above were resolved by Phase 6B2** (`sessionStore.js`,
+`authClient.js`, `authManager.js`, `apiClient.js` — composition-root
+wired). Full detail intentionally not duplicated here; see the 6B2
+entries below.
+
+### Phase 6B2 — Frontend authentication & session — ✅ COMPLETE
+
+Implemented in five ordered chunks, each with focused tests run before
+moving to the next, per the locked contract:
+
+- **6B2-a `sessionStore.js`** — Dexie `session`-table persistence for the
+  refresh token only (`getRefreshToken`/`setRefreshToken`/
+  `clearRefreshToken`). Deliberately does NOT validate the shape of what
+  it reads back — that's `authManager.js`'s job, not this module's,
+  confirmed correct in review. 16 tests.
+- **6B2-b `authClient.js`** — stateless HTTP calls to the four backend
+  auth endpoints (`login`/`refresh`/`logout`/`changePassword`), with two
+  distinct error types (`AuthApiError` vs. `AuthNetworkError`) so callers
+  can tell "the server said no" apart from "never reached the server."
+  29 tests.
+- **6B2-c `authManager.js`** — the single runtime authentication
+  authority: in-memory-only access token, explicit
+  authenticated/unauthenticated status, login (atomic credential
+  install, failure leaves an existing session untouched), session
+  restoration (a thin wrapper over refresh — no separate mechanism),
+  single-flight refresh (concurrent callers share one in-flight promise
+  and one consumed refresh token), and logout (best-effort server call,
+  unconditional local clear, never throws, never retries). Validates the
+  shape of what `sessionStore.getRefreshToken()` returns itself, per the
+  boundary above. 38 tests — two real bugs found in the test fixtures
+  themselves during this chunk (a stateful mock overridden with a
+  constant `mockResolvedValue`, disconnecting it from its own state),
+  fixed by seeding the mock's constructor instead of weakening the
+  assertions.
+- **6B2-d `apiClient.js`** — generic authenticated request wrapper,
+  `request({method, path, body})` matching `createSyncRequest()`'s output
+  shape exactly, so a future sync processor can chain
+  `apiClient.request(createSyncRequest(entry))` directly. Bounded 401
+  recovery: exactly one refresh, exactly one retry, a second 401 on the
+  retry never triggers a second refresh. Deliberately does not re-prove
+  `authManager`'s single-flight guarantee — only that `apiClient` calls
+  `refresh()` once per 401 it personally observes, delegating the actual
+  collapsing to `authManager`. 25 tests — one real bug in a test fixture
+  (a non-single-flight mock needed per-call resolvers, not one shared
+  closure variable), fixed with `vi.waitFor()`.
+- **6B2-e composition-root wiring** — `main.jsx` constructs
+  `sessionStore → authClient → authManager → apiClient` in that order
+  and exposes `authManager`/`apiClient` through the existing
+  `AppContext`, additive to the existing service wiring. Confirmed the
+  locked dependency direction is structurally enforced, not just
+  documented: zero cross-imports exist between any of the four `auth/`
+  modules (grepped, not assumed) — `sessionStore`/`authClient` cannot
+  reach `authManager`, and `authManager` cannot reach `apiClient`. Since
+  `main.jsx` has no test file (consistent with existing convention — the
+  Vite entry point is never unit-tested) and nothing imports it, the
+  exact construction chain was additionally exercised manually outside
+  React (real `createDatabase()`, real modules, no mocks) to get genuine
+  confirmation beyond visual inspection.
+- **6B2-f integration/regression verification** — confirmed no
+  sync-engine behavior anywhere in `auth/` (grepped for
+  `syncQueue`/`navigator.onLine`/`addEventListener`/timers — only found
+  in comments describing what's explicitly out of scope), confirmed zero
+  backend files touched, and specifically verified the exact seam Phase
+  6C would depend on — `apiClient.request(createSyncRequest(entry))` —
+  actually works end-to-end with real (not mocked) `createSyncRequest()`
+  output.
+
+**Files:** `frontend/src/auth/{sessionStore,authClient,authManager,apiClient}.js`
++ matching `.test.js` files; `frontend/src/main.jsx` and
+`frontend/src/contexts/AppContext.jsx` modified (both additive).
+
+**Verification:** frontend suite progressed **738 → 767 → 805 → 830**
+across the four implementation chunks (6B2-a through 6B2-d), holding at
+**830/830** through 6B2-e/6B2-f with zero regressions at every step.
+Backend Mongo-free **75/75**, unaffected throughout (zero backend files
+touched in any 6B2 chunk). `git diff --check` clean at every chunk; every
+touched/new file confirmed LF-only.
+
+### Phase 6C-0 — Queue processor contract investigation + documentation correction — ✅ COMPLETE
+
+**Investigation-only, no processor code written yet.** Before locking the
+Phase 6C (queue processor) contract, re-read the actual `syncQueue`
+producers, the Dexie schema, and both docs fresh from source — the same
+discipline as every prior contract-lock in this project.
+
+**Confirmed from source:**
+- `syncQueue`'s `status` column is indexed
+  (`'++localId, entityType, entityId, status, createdAt'`), so
+  `where('status').equals('pending')` is an efficient query, not a full
+  scan.
+- `attempts`, `lastError`, and any `status` value beyond the initial
+  `'pending'` write are read nowhere in the codebase — reconfirmed fresh,
+  zero hits. No `syncQueue.delete()`/`.update()` precedent exists either.
+  The processor's lifecycle management is being designed from a genuine
+  blank slate in the *implementation*.
+- **A real documentation/implementation conflict, not a blank slate in
+  the *design*:** `ARCHITECTURE.md`'s `SyncQueueEntry` schema table
+  documented `status: 'pending' | 'syncing' | 'done' | 'failed'` and
+  `lastError: string | null` — written speculatively early in the
+  project, before any producer or processor existed, and never
+  cross-checked against what producers actually ended up writing
+  (`'pending'` only, universally). This is corrected above, in the "Sync
+  model" section, rather than the Phase 6C implementation silently
+  diverging from what the doc said.
+- `apiClient.request()` can surface **four** distinct error types, not
+  two: `ApiRequestError` (non-2xx, non-401-recoverable, has `.code`/
+  `.status`), `ApiNetworkError` (transport failure), `AuthApiError` (the
+  401-triggered refresh itself failed because the refresh token was
+  rejected — session already cleared by `authManager` by the time this
+  propagates), `AuthNetworkError` (the 401-triggered refresh failed due
+  to network — session deliberately left intact). This directly shapes
+  the processor's failure-classification switch, locked below.
+- A real asymmetry in *why* each operation type is retry-safe, worth
+  stating explicitly rather than leaving implicit: `upsert` entities
+  converge structurally (no explicit dedup check needed, resending the
+  same payload is harmless by construction); `insert` entities
+  (`stockEvent`/`productChangeEvent`) rely on the backend's explicit
+  `clientId`-keyed idempotency check (Phase 5E/5F, re-verified for the
+  reversal case in 6B0).
+
+**Locked Phase 6C contract** (documented in full in `ARCHITECTURE.md`'s
+"Sync model" section — status vocabulary and lifecycle — summarized
+here):
+
+```
+lifecycle:        pending → processing → delete (success)
+                   pending/processing → failed (permanent rejection)
+crash recovery:    stale 'processing' rows reset to 'pending' on startup
+ordering:          strict global FIFO by localId
+concurrency:       exactly one queue item in flight at a time
+concurrent drain:  shared single drain (processor-level guard, distinct
+                   from authManager's own single-flight refresh guard)
+delivery model:    at-least-once, not exactly-once (documented + why)
+lastError:         bounded string, NOT a structured object -- matches
+                   the existing documented type, avoids schema churn
+auth:              fully delegated to apiClient/authManager; the
+                   processor only branches on which error type it gets
+                   back, never re-implements refresh/retry itself
+out of scope:      navigator.onLine, connectivity listeners, timers,
+                   backoff, background sync, service workers, any
+                   queue-recovery UI for 'failed' entries
+```
+
+**Failure classification, locked:**
+
+| Outcome | Action |
+|---|---|
+| `apiClient.request()` resolves | Delete the queue row |
+| `ApiNetworkError` | Keep `pending`, stop the current drain |
+| `AuthNetworkError` | Keep `pending`, stop the current drain |
+| `AuthApiError` | Keep `pending`, stop the current drain (session is dead; user must re-authenticate) |
+| `ApiRequestError`, status `408`/`429`/`5xx` | Keep `pending`, stop the current drain (transient) |
+| `ApiRequestError`, any other 4xx | Mark `failed`, record `lastError`, continue the drain with the next entry |
+
+A `failed` entry is retained (never deleted) and excluded from further
+automatic processing "until a later, explicitly-defined recovery
+mechanism changes its state" — Phase 6C implements the state, not the
+recovery mechanism, deliberately avoiding scope creep into a retry UI.
+
+**Files changed this entry:** `docs/ARCHITECTURE.md` only (the
+`SyncQueueEntry` schema table and its surrounding "Sync model" section).
+No code changed; no tests affected by this entry itself.
+
+**Next:** Phase 6C-1 (queue lifecycle + crash recovery) through 6C-6
+(final regression/scope gate), implemented in the same small-chunk,
+test-after-every-chunk discipline as every phase so far.
+
 
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
