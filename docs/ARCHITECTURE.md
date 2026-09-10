@@ -895,15 +895,35 @@ of a possible provider, not a hard dependency.
 
 - Backend issues a short-lived JWT (access) + a long-lived opaque refresh
   token (stored hashed, server-side, revocable, one row per trusted device).
+  **Confirmed against source (Phase 6B1): access token expiry 15 minutes,
+  refresh token expiry 90 days (shipped `.env.example` defaults); refresh
+  rotation is one-time-use — every successful `/refresh` call atomically
+  removes the presented token and issues a new one, so the previous
+  refresh token is immediately dead once rotated.**
 - Frontend keeps the JWT in memory only. The refresh token is stored in
   IndexedDB (`session` table) rather than `localStorage` — avoids XSS-read
   exposure and keeps it alongside the rest of the offline-capable state.
+  **This storage-location design is intent, not yet implemented or
+  verified against frontend code — `frontend/src/auth/` and the `session`
+  table are both still empty/unused as of Phase 6B1. Treat this bullet as
+  the plan for Phase 6B2 to lock, not as a currently-built fact.**
 - A "trusted device" is simply a device holding a valid, unrevoked refresh
   token. It does not need to contact the server to keep working offline —
   only the *next sync attempt* will discover if the token was revoked.
-- Password change → server revokes all refresh tokens → every device's next
-  sync attempt gets 401 → frontend prompts re-login before further sync,
-  per PRD §35. Local data and offline usage remain available regardless.
+- **Password change and token invalidation timing (corrected, Phase
+  6B1):** password change revokes all refresh tokens immediately, in one
+  atomic update. It does **not** invalidate any access token already
+  issued before the change — `requireAuth` verifies access tokens
+  statelessly (JWT signature/expiry only, confirmed zero database reads
+  per ordinary request), so a device holding a still-valid access token
+  may continue making authenticated requests normally for up to the
+  remainder of that token's 15-minute window, entirely unaffected by the
+  password change. The password change only becomes observable to that
+  device once its access token expires and it attempts to refresh: the
+  refresh call fails against the now-revoked/removed refresh token
+  (`401 UNAUTHORIZED`), and at that point the frontend must require
+  re-login before any further sync, per PRD §35. Local data and offline
+  usage remain available throughout, regardless of this token state.
 
 ## Assumptions made where the spec was silent
 

@@ -2046,6 +2046,86 @@ implementation), since every Phase 5 sync target endpoint requires
 `requireAuth` and the frontend currently has no token/session handling at
 all.
 
+### Phase 6B1 — Frontend authentication contract investigation — ✅ COMPLETE
+
+**Investigation only, no implementation** — scoped to derive the actual
+backend auth contract fresh from source before building anything, rather
+than trusting `ARCHITECTURE.md`'s existing "Authentication" section at
+face value. That caution was explicitly warranted: some of that section's
+claims turned out to be accurate-but-unverified design intent rather than
+confirmed fact, since no frontend auth code exists yet to check them
+against.
+
+**Confirmed from source, accurate, now cited in `ARCHITECTURE.md`:**
+- Four endpoints: `POST /api/auth/login` (`{username,password}` →
+  `{accessToken,refreshToken}`), `POST /api/auth/refresh`
+  (`{refreshToken}` → `{accessToken,refreshToken}`, both rotated),
+  `POST /api/auth/logout` (`{refreshToken}` → `{success:true}` always,
+  non-oracle, unauthenticated by design), `PATCH /api/auth/password`
+  (behind `requireAuth`, revokes every refresh token as one atomic
+  update).
+- Access token: JWT, `{sub: userId}` payload only, **15-minute expiry**
+  (`.env.example` default). Refresh token: opaque 256-bit hex, SHA-256
+  hashed for storage, **90-day expiry**.
+- **Refresh rotation is one-time-use, not sliding-window**: every
+  `/refresh` call atomically removes the presented token's entry and
+  issues a brand-new one in the same write. A client must persist the
+  newly-rotated refresh token immediately — the previous one is dead the
+  instant rotation succeeds. Two concurrent refresh calls with the same
+  old token: exactly one wins, the other gets `401`.
+- `requireAuth` is fully stateless (zero DB reads per ordinary request,
+  confirmed by source inspection, not just its own header comment).
+- No device-registration endpoint exists; a device becomes "trusted"
+  simply by possessing a valid refresh token from a successful login,
+  tracked server-side only via a `User-Agent`-derived `deviceLabel` for
+  display/audit, not access control.
+- The `session` Dexie table (`key`-indexed, single-row) has no code
+  reading or writing it anywhere (reconfirmed by grep this session,
+  matching Pass 1's finding) — its only description anywhere is its own
+  generic schema comment ("single-row trusted-device token"), which does
+  not specify whether that means the refresh token, the access token, or
+  something else.
+
+**One real factual correction found and fixed in `ARCHITECTURE.md`'s
+Authentication section:** the previous text conflated two different
+mechanisms — refresh-token revocation and access-token natural expiry —
+into a single claim ("password change → every device's next sync attempt
+gets 401") that was imprecise about timing. Corrected to state plainly
+that a password change invalidates refresh tokens immediately but has NO
+effect on an already-issued access token, which remains valid and
+accepted by every ordinary endpoint for up to its remaining 15-minute
+window regardless of the password change — the 401 only appears once
+that device's access token expires and it attempts to refresh.
+
+**Explicitly left uncorrected, per instruction, pending Phase 6B2:** the
+storage-location claims ("JWT kept in memory only," "refresh token stored
+in the `session` table") remain in the document as stated, but are now
+explicitly flagged as design intent to be locked by Phase 6B2, not
+confirmed current behavior — since no frontend code exists yet to verify
+either claim against.
+
+**Files changed:** `docs/ARCHITECTURE.md` only (the Authentication
+section). No code changed; no tests affected.
+
+**A documentation slip caught and fixed while making this entry:** the
+prior turn's Phase 6B0 edit had accidentally dropped the
+`## Phase 7 — Dashboard + classification management UI — NOT STARTED`
+heading from this file (a `str_replace` boundary error, not a deliberate
+removal) — caught during this entry's own insertion point check and
+restored. Recorded here explicitly rather than silently fixed, per this
+project's practice.
+
+**Open items carried into Phase 6B2, per review:** single-flight refresh
+(if multiple requests hit 401 concurrently, only one refresh call should
+fire, with the rest awaiting its result rather than each independently
+racing to rotate the same token), a bounded retry policy (at most one
+retry-after-refresh per request, not an unbounded loop), the exact
+`session` table shape, and explicit offline-vs-logged-out state handling
+(an expired/unrefreshable session must not be treated as "log the user
+out of the local app" — local data stays usable per PRD §34/§35).
+
+
+## Phase 7 — Dashboard + classification management UI — NOT STARTED
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 
 ---
