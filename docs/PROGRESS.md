@@ -2291,6 +2291,150 @@ No code changed; no tests affected by this entry itself.
 (final regression/scope gate), implemented in the same small-chunk,
 test-after-every-chunk discipline as every phase so far.
 
+### Phase 6C — Queue processor — ✅ COMPLETE (6C-0–6C-6)
+
+Implemented in the same locked-contract-first, small-chunk discipline as
+every phase before it. Full contract locked in 6C-0 (see that entry
+above); this entry summarizes what was actually built against it and the
+final closure gate.
+
+**Files added, no existing 6A/6B files modified except where noted:**
+- `frontend/src/data/sync/syncQueueLifecycle.js` (6C-1) — pure Dexie
+  lifecycle primitives: `claimNextPending()` (atomic claim inside one
+  `rw` transaction, verified empirically against the real
+  `fake-indexeddb` backend to return ascending-`localId`/FIFO order, not
+  merely assumed from Dexie's documentation), `markSucceeded()` (delete,
+  no `done` state), `markFailed()` (retain + bounded-string `lastError`),
+  `recoverStaleProcessingEntries()` (crash recovery). 26 tests.
+- `frontend/src/data/sync/syncEntryExecutor.js` (6C-2) — one claimed
+  entry, one HTTP attempt: `createSyncRequest(entry) → apiClient.request()`,
+  normalizing all four possible thrown error types
+  (`ApiRequestError`/`ApiNetworkError`/`AuthApiError`/`AuthNetworkError`)
+  into a discriminated outcome rather than throwing; rethrows anything
+  outside those four rather than misclassifying an unexpected bug.
+  `createSyncRequest(entry)` deliberately sits outside the try/catch — a
+  malformed local queue entry throws directly rather than being
+  misclassified as a network/API failure, an intentional boundary
+  confirmed correct in review, not changed. 15 tests.
+- `frontend/src/data/sync/syncFailureClassifier.js` (6C-3) — pure
+  decision logic (no db access, no execution) mapping each
+  `SYNC_OUTCOME` to the locked action: success → delete;
+  `ApiNetworkError`/`AuthNetworkError`/`AuthApiError` → stop the drain;
+  `ApiRequestError` with `408`/`429`/`5xx` → stop the drain (transient);
+  any other `ApiRequestError` → mark failed with a formatted
+  `"CODE: message (status)"` string. 27 tests, with explicit boundary
+  coverage at every edge the locked table implies (407/408, 429/430,
+  499/500, 599 upper bound).
+- `frontend/src/data/sync/syncDrainer.js` (6C-4) — the FIFO drain loop
+  with a single-flight concurrent-drain guard (a distinct,
+  processor-level mechanism from `authManager`'s own single-flight
+  refresh guard — not a reuse of it). Recovery runs once per actual
+  drain execution, not once per `drain()` call — a caller joining an
+  in-flight drain does not trigger a second recovery pass, verified with
+  a spy. Strict sequential processing (max-concurrency-1 verified with
+  an artificial-delay fixture). Permanent failures continue the drain;
+  transient/auth failures stop it with the entry left `processing` for a
+  later drain's own recovery pass to reclaim. An unexpected error from
+  `executeSyncEntry`/`classifySyncOutcome` propagates and rejects
+  `drain()` rather than being caught and reinterpreted as queue policy —
+  the entry stays `processing`, untouched. 23 tests.
+- `frontend/src/data/sync/syncDrainer.integration.test.js` (6C-5) —
+  full-chain composition verification: every real production module
+  (`sessionStore`/`authClient`/`authManager`/`apiClient`/
+  `syncQueueLifecycle`/`syncEntryExecutor`/`syncDrainer`) wired exactly
+  as the composition root does, with only `fetch` itself mocked. 10
+  scenarios proving cross-module seams specifically — mixed entity types
+  in one drain all correctly serialize through the real `syncRequest.js`
+  stripping (the strongest single proof that 6A and 6C are genuinely
+  composed, not just individually correct); 401 recovery fully
+  transparent to the drain/classifier layer; a genuinely-expired refresh
+  token propagating as a real `AUTH_ERROR` and clearing real
+  `authManager` state; permanent rejection producing the real formatted
+  `lastError`; crash recovery and network failure through the complete
+  real chain. No source module added in this pass — verification only.
+
+**Documentation correction, folded into 6C-0 before any implementation**
+(not repeated in full here — see that entry above): `ARCHITECTURE.md`'s
+`SyncQueueEntry.status` vocabulary was speculatively documented early in
+the project as `'pending' | 'syncing' | 'done' | 'failed'`, before any
+producer or processor existed, and never cross-checked against what
+producers actually wrote (`'pending'` only). Corrected to
+`'pending' | 'processing' | 'failed'` — matching what 6C actually
+implements — with the full lifecycle, crash-recovery, and at-least-once
+delivery model documented alongside it.
+
+**Test progression across the six sub-phases:**
+```
+830 (end of 6B2) → +26 (6C-1) → 856
+                  → +15 (6C-2) → 871
+                  → +27 (6C-3) → 898
+                  → +23 (6C-4) → 921
+                  → +10 (6C-5) → 931
+```
+Zero regressions at any step. Backend Mongo-free held at **75/75**
+throughout — zero backend files touched anywhere in Phase 6C.
+
+**Real bugs found and fixed during implementation — all in test
+fixtures, none in the shipped implementation modules** (each caught by
+actually running the tests, not assumed correct from reading the code):
+- 6C-2: none.
+- 6C-3: none.
+- 6C-4: three, all in `syncDrainer.test.js` — a `seedEntry()` helper
+  whose `...overrides` spread silently clobbered a computed `entityId`
+  back to its unprefixed form; a single-flight test that assumed a mock
+  executor's resolver would be assigned synchronously when it's actually
+  microtask-scheduled behind `recovery → claim → execute` (fixed with
+  `vi.waitFor()`); a "fresh drain execution" test that tried to prove
+  its point using an entry with no registered mock outcome, which would
+  have crashed the real classifier rather than testing anything
+  meaningful.
+- 6C-5: five, all the same class — calling `authManager.restoreSession()`
+  before `mockFetchQueue()` had installed `global.fetch`, producing a
+  genuine "fetch is not defined." Fixed by reordering, not by changing
+  any assertion.
+
+**6C-6 — final regression/scope gate, this entry's own closure:**
+- `git status`: 6C's own footprint is exactly 9 files, all new, all
+  under `frontend/src/data/sync/` — 4 source modules
+  (`syncQueueLifecycle.js`/`syncEntryExecutor.js`/
+  `syncFailureClassifier.js`/`syncDrainer.js`) + 5 test files. No
+  existing 6A/6B source file was modified by Phase 6C itself.
+- Grepped every 6C source file (excluding tests) for
+  `navigator.onLine`/`addEventListener`/`setInterval`/`setTimeout`/React/
+  UI concerns: zero hits. No connectivity listeners, timers, polling, or
+  UI code exists anywhere in the shipped Phase 6C modules.
+- Confirmed `syncDrainer` is **not** wired into `main.jsx`/`AppContext.jsx`
+  — zero references, checked directly. This is correct and expected: no
+  6C sub-phase ever included composition-root wiring in its locked
+  scope, unlike Phase 6B2 which had an explicit 6B2-e wiring chunk.
+  **This is a deliberate, named gap, not an oversight:** the sync
+  modules exist and are proven (via 6C-5) to compose correctly together,
+  but nothing in the running application currently calls `drain()`
+  anywhere. Startup triggers, connectivity triggers, and the wiring
+  itself remain explicitly out of Phase 6C's locked scope for a later
+  pass.
+- Re-verified the shipped `syncFailureClassifier.js` against the locked
+  6C-0 table line-by-line: exact match, no drift introduced during
+  implementation.
+- Re-verified the shipped status vocabulary (`'pending'`/`'processing'`/
+  `'failed'`, grepped directly from `syncQueueLifecycle.js`) matches the
+  corrected `ARCHITECTURE.md` documentation exactly — no drift.
+- Full suite re-run fresh for this closing gate: frontend **931/931**,
+  backend Mongo-free **75/75**. `git diff --check` clean. Every 6C file
+  (source and test) reconfirmed LF-only.
+
+**Explicitly out of scope, still open for later Phase 6 work:** queue
+draining being *triggered* by anything — no startup trigger, no
+`navigator.onLine`/connectivity listener, no timers/backoff, no
+background sync, no service worker integration, no composition-root
+wiring of `syncDrainer` at all, no UI (no toasts, no sync-status
+indicator, no manual "retry failed items" affordance for entries in the
+`failed` state), no LWW/`accepted` reconciliation, and the
+`recoverStaleProcessingEntries()` read-outside-write-transaction
+distinction flagged during 6C-1's review remains worth preserving if a
+future pass introduces true concurrent drain protection beyond the
+current single-flight guard.
+
 
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
