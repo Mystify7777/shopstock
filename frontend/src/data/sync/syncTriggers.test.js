@@ -55,7 +55,7 @@ describe('triggerStartupSync', () => {
     expect(syncDrainer.drain).not.toHaveBeenCalled();
   });
 
-  it('never throws itself, even when restoreSession rejects', async () => {
+  it('does not throw itself for the expected AuthNetworkError case', async () => {
     const authManager = makeMockAuthManager();
     authManager.restoreSession.mockRejectedValue(new AuthNetworkError(new Error('offline')));
     const syncDrainer = makeMockSyncDrainer();
@@ -63,12 +63,33 @@ describe('triggerStartupSync', () => {
     await expect(triggerStartupSync({ authManager, syncDrainer })).resolves.toBeUndefined();
   });
 
-  it('never throws itself when restoreSession throws AuthApiError', async () => {
+  it('does not throw itself for the expected AuthApiError case', async () => {
     const authManager = makeMockAuthManager();
     authManager.restoreSession.mockRejectedValue(new AuthApiError('UNAUTHORIZED', 'x', 401));
     const syncDrainer = makeMockSyncDrainer();
 
     await expect(triggerStartupSync({ authManager, syncDrainer })).resolves.toBeUndefined();
+  });
+
+  it('propagates an unexpected error rather than silently swallowing it', async () => {
+    // A genuine programming defect somewhere in the restore path --
+    // NOT one of the two expected auth-restoration failure types. Must
+    // not be treated the same as "no session to restore."
+    const authManager = makeMockAuthManager();
+    const bug = new TypeError('something unrelated broke');
+    authManager.restoreSession.mockRejectedValue(bug);
+    const syncDrainer = makeMockSyncDrainer();
+
+    await expect(triggerStartupSync({ authManager, syncDrainer })).rejects.toBe(bug);
+  });
+
+  it('does not attempt to drain when an unexpected error is thrown', async () => {
+    const authManager = makeMockAuthManager();
+    authManager.restoreSession.mockRejectedValue(new TypeError('boom'));
+    const syncDrainer = makeMockSyncDrainer();
+
+    await expect(triggerStartupSync({ authManager, syncDrainer })).rejects.toThrow();
+    expect(syncDrainer.drain).not.toHaveBeenCalled();
   });
 
   it('checks status only after restoreSession has actually resolved (correct ordering)', async () => {

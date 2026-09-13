@@ -46,13 +46,14 @@
 // it.
 
 import { AUTH_STATUS } from '../../auth/authManager.js';
+import { AuthApiError, AuthNetworkError } from '../../auth/authClient.js';
 
 /**
  * Attempt to restore a persisted session on application startup, and
  * drain the sync queue ONLY if that restoration actually establishes an
  * authenticated session.
  *
- * Three distinct outcomes from authManager.restoreSession(), handled
+ * Four distinct outcomes from authManager.restoreSession(), handled
  * deliberately differently:
  *
  *   1. Resolves, status becomes AUTHENTICATED (a valid persisted
@@ -71,23 +72,40 @@ import { AUTH_STATUS } from '../../auth/authManager.js';
  *      now, but this is NOT a logout -- a later connectivity-restoration
  *      trigger will get another chance once the network returns.
  *
- * Never throws -- a failed restoration attempt (of either kind) is a
- * normal startup outcome, not a caller-facing error.
+ * Expected authentication/network restoration failures (outcomes 3 and
+ * 4 above) do NOT prevent application startup and are swallowed here --
+ * they are normal, anticipated outcomes, not caller-facing errors. An
+ * UNEXPECTED error (anything that isn't an AuthApiError or
+ * AuthNetworkError -- a genuine programming defect somewhere in the
+ * restore path) is deliberately NOT swallowed: it propagates out of
+ * this function. Silently absorbing every possible exception here would
+ * convert a real bug into an indistinguishable "nothing to sync," which
+ * is exactly the kind of transport-vs-defect conflation this project has
+ * otherwise been careful to avoid (see syncEntryExecutor.js's own
+ * rethrow-on-unrecognized-error precedent).
  *
  * @param {{
  *   authManager: ReturnType<import('../../auth/authManager.js').createAuthManager>,
  *   syncDrainer: ReturnType<import('./syncDrainer.js').createSyncDrainer>,
  * }} deps
+ * @throws {Error} any error from restoreSession() that is not an
+ *   AuthApiError or AuthNetworkError -- rethrown, not swallowed.
  */
 export async function triggerStartupSync({ authManager, syncDrainer }) {
   try {
     await authManager.restoreSession();
-  } catch {
-    // AuthApiError or AuthNetworkError -- either way, restoration did
-    // not establish an authenticated session right now. Nothing further
-    // to do here; a later trigger (connectivity restoration, or a
-    // future login) gets its own chance.
-    return;
+  } catch (error) {
+    if (error instanceof AuthApiError || error instanceof AuthNetworkError) {
+      // Either way, restoration did not establish an authenticated
+      // session right now. Nothing further to do here; a later trigger
+      // (connectivity restoration, or a future login) gets its own
+      // chance.
+      return;
+    }
+    // Not one of the two expected auth-restoration failure types --
+    // a genuine unexpected error. Propagate it rather than silently
+    // treating a bug as "nothing to sync."
+    throw error;
   }
 
   if (authManager.getStatus() === AUTH_STATUS.AUTHENTICATED) {
