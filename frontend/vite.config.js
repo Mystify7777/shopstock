@@ -50,7 +50,8 @@ export default defineConfig({
     environmentMatchGlobs: [
       ['src/components/**', 'jsdom'],
       ['src/pages/**', 'jsdom'],
-      ['src/hooks/**', 'jsdom']
+      ['src/hooks/**', 'jsdom'],
+      ['src/data/sync/syncTriggers.test.js', 'jsdom']
     ],
     include: ['{src,tests}/**/*.test.{js,jsx}'],
     // fake-indexeddb/auto installs `indexedDB` and `IDBKeyRange` as
