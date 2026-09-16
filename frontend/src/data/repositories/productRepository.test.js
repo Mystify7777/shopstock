@@ -420,6 +420,157 @@ describe('productRepository', () => {
     });
 
     // -----------------------------------------------------------------------
+    // fieldMutations — Phase 6E LWW transport metadata
+    // -----------------------------------------------------------------------
+
+    it('zero changeEvents produces an empty fieldMutations object on the product entry', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct();
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { notes: 'untracked field' });
+      await repo.update(updated, []);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(productEntry.payload.fieldMutations).toEqual({});
+    });
+
+    it('one changed field produces exactly one fieldMutations entry', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      await repo.update(updated, [event]);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(Object.keys(productEntry.payload.fieldMutations)).toEqual(['name']);
+    });
+
+    it('multiple changed fields each produce their own fieldMutations entry', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Start', sellingPrice: 10 });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'End', sellingPrice: 20 });
+      const events = [
+        makeChangeEvent(product.id, { field: 'name' }),
+        makeChangeEvent(product.id, { field: 'sellingPrice' })
+      ];
+      await repo.update(updated, events);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(Object.keys(productEntry.payload.fieldMutations).sort()).toEqual(['name', 'sellingPrice']);
+    });
+
+    it('fieldMutations[field].eventId is exactly the corresponding change event\'s id', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      await repo.update(updated, [event]);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(productEntry.payload.fieldMutations.name.eventId).toBe(event.id);
+    });
+
+    it('fieldMutations[field].timestamp is exactly the corresponding change event\'s timestamp', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const event = makeChangeEvent(product.id, { field: 'name', timestamp: '2026-09-14T10:07:00.000Z' });
+      await repo.update(updated, [event]);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(productEntry.payload.fieldMutations.name.timestamp).toBe('2026-09-14T10:07:00.000Z');
+    });
+
+    it('fieldMutations contains no entries beyond the actual changeEvents (no phantom fields)', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Start', sellingPrice: 10, archived: false });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'End' });
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      await repo.update(updated, [event]);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(Object.keys(productEntry.payload.fieldMutations)).toHaveLength(1);
+    });
+
+    it('exactly one entry per changeEvent -- the underlying invariant this builder relies on, explicitly documented', async () => {
+      // TRACKED_FIELD_MAP is a plain object; Object.entries() over it can
+      // never yield the same key twice; buildChangeEvents() has one
+      // definition and one call site -- so buildChangeEvents() cannot
+      // currently produce two events with the same field for one
+      // mutation. This test protects the builder's Object.fromEntries()
+      // derivation against a future change to that invariant: if it
+      // ever breaks, Object.fromEntries() would silently let a later
+      // duplicate-field event overwrite an earlier one in the map,
+      // rather than this test catching it explicitly.
+      const product = makeProduct({ name: 'Start', sellingPrice: 10, archived: false });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const { product: updated } = updateProduct(product, {
+        name: 'End',
+        sellingPrice: 20,
+        archived: true
+      });
+      const events = [
+        makeChangeEvent(product.id, { field: 'name' }),
+        makeChangeEvent(product.id, { field: 'sellingPrice' }),
+        makeChangeEvent(product.id, { field: 'archived' })
+      ];
+      await repo.update(updated, events);
+      const entries = await db.syncQueue.toArray();
+      const productEntry = entries.find((e) => e.entityType === 'product');
+      expect(Object.keys(productEntry.payload.fieldMutations)).toHaveLength(events.length);
+    });
+
+    it('does not mutate the product object passed in', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const snapshot = { ...updated };
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      await repo.update(updated, [event]);
+      expect(updated).toEqual(snapshot);
+      expect(Object.hasOwn(updated, 'fieldMutations')).toBe(false);
+    });
+
+    it('does not mutate the changeEvents array or its entries', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      const snapshot = { ...event };
+      await repo.update(updated, [event]);
+      expect(event).toEqual(snapshot);
+    });
+
+    it('the local products Dexie table never gains a fieldMutations field', async () => {
+      const { updateProduct } = await import('../../domain/product/productFactory.js');
+      const product = makeProduct({ name: 'Before' });
+      await repo.create(product);
+      await db.syncQueue.clear();
+      const { product: updated } = updateProduct(product, { name: 'After' });
+      const event = makeChangeEvent(product.id, { field: 'name' });
+      await repo.update(updated, [event]);
+      const stored = await db.products.get(product.id);
+      expect(Object.hasOwn(stored, 'fieldMutations')).toBe(false);
+    });
+
+    // -----------------------------------------------------------------------
     // clientId semantics — the critical test
     // -----------------------------------------------------------------------
 

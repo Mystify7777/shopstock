@@ -79,14 +79,40 @@ const RECOGNIZED_LIST_OPTIONS = new Set(['includeArchived']);
  *                          to the same product as a retry of an earlier one)
  *
  * See docs/ARCHITECTURE.md "entityId vs. clientId".
+ *
+ * `fieldMutations` -- Phase 6E LWW transport metadata. A map, keyed by
+ * tracked field name, of { timestamp, eventId } -- one entry per field
+ * this specific mutation actually changed, derived directly from
+ * `changeEvents` (already fully constructed by buildChangeEvents()
+ * before this function is ever called). No new timestamp or id is
+ * generated here: `timestamp`/`eventId` are read straight off each
+ * already-existing ProductChangeEvent object. Present only inside the
+ * queue entry's `payload` -- never added to the `product` object itself,
+ * never persisted to the local `products` Dexie table, matching the
+ * exact storage-layer-only pattern already established for
+ * appliedQuantity/expectedCurrentQuantity (see stockEventRepository.js's
+ * own header comment). The backend's atomic per-field LWW comparison
+ * (productService.js) is the sole authoritative use of this data --
+ * see docs/ARCHITECTURE.md's Phase 6E entry for the full locked contract.
+ *
+ * @param {object} product
+ * @param {object[]} [changeEvents] Already-constructed ProductChangeEvent
+ *   objects for THIS mutation (zero or more). Read-only -- never mutated.
  */
-function buildProductSyncEntry(product) {
+function buildProductSyncEntry(product, changeEvents = []) {
+  const fieldMutations = Object.fromEntries(
+    changeEvents.map((event) => [
+      event.field,
+      { timestamp: event.timestamp, eventId: event.id }
+    ])
+  );
+
   return {
     entityType: 'product',
     operation: 'upsert',
     entityId: product.id,
     clientId: generateId(),       // fresh per mutation — never reuse product.id
-    payload: product,
+    payload: { ...product, fieldMutations },
     attempts: 0,
     status: 'pending',
     createdAt: timestampNow(),
@@ -292,7 +318,7 @@ export function createProductRepository(db) {
           await db.syncQueue.add(buildChangeEventSyncEntry(event));
         }
 
-        await db.syncQueue.add(buildProductSyncEntry(product));
+        await db.syncQueue.add(buildProductSyncEntry(product, changeEvents));
       }
     );
 

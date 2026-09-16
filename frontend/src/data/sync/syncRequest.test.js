@@ -196,6 +196,49 @@ describe('createSyncRequest', () => {
       expect(Object.hasOwn(payload, 'quantity')).toBe(true);
       expect(payload.quantity).toBe(42);
     });
+
+    it('preserves fieldMutations on the wire body (Phase 6E LWW transport metadata)', () => {
+      const payload = makeProductPayload({
+        fieldMutations: {
+          sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' }
+        }
+      });
+      const entry = makeQueueEntry({ entityType: 'product', entityId: 'prod-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(body.fieldMutations).toEqual({
+        sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' }
+      });
+    });
+
+    it('preserves an empty fieldMutations object unchanged', () => {
+      const payload = makeProductPayload({ fieldMutations: {} });
+      const entry = makeQueueEntry({ entityType: 'product', entityId: 'prod-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(body.fieldMutations).toEqual({});
+    });
+
+    it('preserves multiple fieldMutations entries unchanged', () => {
+      const payload = makeProductPayload({
+        fieldMutations: {
+          name: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' },
+          sellingPrice: { timestamp: '2026-09-14T10:07:00.001Z', eventId: 'evt-2' }
+        }
+      });
+      const entry = makeQueueEntry({ entityType: 'product', entityId: 'prod-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(Object.keys(body.fieldMutations).sort()).toEqual(['name', 'sellingPrice']);
+    });
+
+    it('still strips quantity even when fieldMutations is present', () => {
+      const payload = makeProductPayload({
+        quantity: 42,
+        fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' } }
+      });
+      const entry = makeQueueEntry({ entityType: 'product', entityId: 'prod-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(Object.hasOwn(body, 'quantity')).toBe(false);
+      expect(body.fieldMutations).toBeDefined();
+    });
   });
 
   // -------------------------------------------------------------------------

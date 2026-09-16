@@ -26,8 +26,32 @@
 // it's a service-layer invariant, same division of responsibility as
 // classificationService.js's identity rule living in the service, not
 // the schema.
+//
+// `fieldTimestamps` -- Phase 6E, added additively. The authoritative,
+// server-maintained LWW state for the six tracked Product fields (see
+// TRACKED_CHANGE_EVENT_FIELDS in productChangeEventModel.js). Shape:
+//
+//   fieldTimestamps[field] = { timestamp: Date, eventId: String }
+//
+// This is NOT settable by clients -- see productService.js's atomic
+// upsert implementation, which is the only writer. A missing entry for
+// a given field means "no prior LWW-aware mutation exists for this
+// field" -- the correct, and only sane, interpretation for legacy
+// Products created before Phase 6E, requiring no migration: `default:
+// {}` means every existing Product already satisfies this shape with
+// zero entries, and the first LWW-aware mutation to any given field
+// always wins unconditionally against an absent entry. See
+// docs/ARCHITECTURE.md's Phase 6E entry for the full locked contract.
 
 import mongoose from 'mongoose';
+
+const fieldTimestampEntrySchema = new mongoose.Schema(
+  {
+    timestamp: { type: Date, required: true },
+    eventId: { type: String, required: true }
+  },
+  { _id: false }
+);
 
 const productSchema = new mongoose.Schema(
   {
@@ -48,7 +72,13 @@ const productSchema = new mongoose.Schema(
     notes: { type: String, default: null },
     archived: { type: Boolean, required: true, default: false },
     createdAt: { type: Date, required: true },
-    updatedAt: { type: Date, required: true }
+    updatedAt: { type: Date, required: true },
+    fieldTimestamps: {
+      type: Map,
+      of: fieldTimestampEntrySchema,
+      required: true,
+      default: {}
+    }
   },
   { _id: false, versionKey: false }
 );

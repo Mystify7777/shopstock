@@ -2435,6 +2435,392 @@ distinction flagged during 6C-1's review remains worth preserving if a
 future pass introduces true concurrent drain protection beyond the
 current single-flight guard.
 
+### Phase 6D — Application reachability (triggers + wiring) — ✅ COMPLETE
+
+Phase 6C deliberately shipped a fully tested sync engine with no
+application-level way to reach it — this phase closes that gap. Locked
+before implementation, same discipline as every phase so far: do not
+redesign or reopen anything 6C locked (queue lifecycle, ordering,
+concurrency, failure behavior, payload preservation, the sync boundary
+itself all remain exactly as 6C built them).
+
+**6D-0 — investigation, no code.** The single most important finding:
+**neither `authManager.restoreSession()` nor `authManager.login()` is
+called anywhere in the actual application** — confirmed by grep, zero
+real call sites, only test usage. There is no login page, no login
+route. This directly shaped scope: a "successful interactive login
+triggers sync" requirement has no real event to attach to yet, since no
+login UI exists. Also confirmed: `recoverStaleProcessingEntries()` is
+already called automatically at the start of every `drain()` (built in
+6C-4) — no separate recovery wiring was needed, only wiring to call
+`drain()` itself. Traced precisely through source that an unauthenticated
+`drain()` call is already safe: the resulting request has no
+`Authorization` header, the backend returns `401`, and the existing
+401-recovery path in `apiClient.js` (built in 6B2-d) already attempts a
+refresh — meaning a connectivity trigger needs no auth-readiness gating
+of its own, and multiple trigger sources firing concurrently are already
+safe via `syncDrainer`'s existing single-flight guard (6C-4). Also
+confirmed: `claimNextPending()` only ever selects `status === 'pending'`
+— a `failed` entry is already structurally and permanently excluded from
+every future drain, so no application-level trigger needs any special
+handling for `failed` entries at all.
+
+**Review correction before implementation, locked:** the original
+proposal would have triggered a drain merely because
+`restoreSession()` resolved without throwing — but `restoreSession()`
+resolves normally even when there is no persisted refresh token,
+leaving the manager `unauthenticated`. Corrected contract: check
+`authManager.getStatus() === AUTH_STATUS.AUTHENTICATED` *after*
+`restoreSession()` resolves, and drain only then. A second correction:
+infrastructure triggers (`syncTriggers.js`) connect directly to
+`authManager`/`syncDrainer` in `main.jsx`, not routed through
+`AppContext` — `syncDrainer` is still exposed through context, but only
+for future UI consumers, not as the mechanism by which startup/
+connectivity triggers reach it.
+
+**6D-1 — composition-root wiring.** `main.jsx` now constructs
+`syncQueueLifecycle(db) → syncEntryExecutor({apiClient}) →
+syncDrainer({syncQueueLifecycle, syncEntryExecutor})`, and exposes
+`syncDrainer` through the existing `AppContext` for future consumers.
+No triggers yet in this slice. Verified with the same discipline as
+6B2-e: since `main.jsx` has no test file, the real construction chain
+was exercised manually outside React (real `createDatabase()`, real
+modules, no mocks) — including an actual `drain()` call against a real
+empty queue, confirming `{processed:0, failed:0, stopped:false,
+reason:null}`, not merely that construction didn't throw.
+
+**6D-2/6D-3 — `frontend/src/data/sync/syncTriggers.js`.**
+`triggerStartupSync({authManager, syncDrainer})`: attempts
+`restoreSession()`, drains only if status becomes `AUTHENTICATED`
+afterward. `registerConnectivitySyncTrigger({syncDrainer})`: a single
+`window.addEventListener('online', ...)` that calls `drain()` directly,
+unconditionally, with no gating — per the 6D-0 finding that none is
+needed. Both wired directly in `main.jsx`, not through context. The
+deferred login-trigger seam (successful `authManager.login()` should
+call `syncDrainer.drain()` exactly like the startup trigger does) is
+documented in the file's own header comment, not built, since no login
+UI exists to attach it to.
+
+**Review-caught fix, folded in before closure:** the first
+implementation of `triggerStartupSync()` caught *every* error from
+`restoreSession()` indiscriminately — including a genuine unexpected
+programming defect, which would have been silently treated the same as
+"no session to restore." Corrected to catch only `AuthApiError`/
+`AuthNetworkError` (the two documented, expected restoration-failure
+types) and rethrow anything else, matching the same rethrow-on-
+unrecognized-error discipline `syncEntryExecutor.js` established in
+6C-2. Two tests added for this specifically: an unexpected error
+propagates out of `triggerStartupSync()`, and no drain is attempted when
+it does.
+
+**Files changed:**
+- `frontend/src/data/sync/syncTriggers.js` — new.
+- `frontend/src/data/sync/syncTriggers.test.js` — new, 15 tests (13
+  original + 2 from the broad-catch fix).
+- `frontend/src/main.jsx` — sync chain construction, `syncDrainer`
+  exposed through `AppContext`, both triggers registered directly.
+- `frontend/src/contexts/AppContext.jsx` — JSDoc updated for the new
+  `syncDrainer` context value; no runtime change.
+- `frontend/vite.config.js` — added `syncTriggers.test.js` to the jsdom
+  environment list (the connectivity trigger test needs real
+  `window.addEventListener`/`dispatchEvent`), kept narrowly scoped to
+  that one file rather than converting the whole suite to jsdom.
+
+**Verification:** frontend suite progressed **931 → 944** (6D-1 through
+6D-3) **→ 946** (the broad-catch fix), zero regressions at any step.
+Backend Mongo-free held at **75/75**, unaffected — zero backend files
+touched anywhere in Phase 6D. `git diff --check` clean throughout; every
+touched/new file confirmed LF-only.
+
+**What Phase 6D did NOT do, confirmed by this reconciliation pass rather
+than merely asserted:** no login UI was built (the deferred seam remains
+exactly that — documented, not implemented); no sync-status/recovery UI
+was built (confirmed by grep — zero UI files reference `syncDrainer`/
+`DrainResult`/sync status anywhere); no timers, polling, backoff, or
+service-worker integration exist (confirmed by grep — the one remaining
+hit is a test's scope-boundary assertion, not real code); no LWW/
+`accepted` reconciliation was touched.
+
+### Phase 6 roadmap reconciliation (post-6D) — findings, no implementation
+
+Performed after 6D closed, to determine what genuinely remains before
+deciding on any further Phase 6 work, rather than trusting stale external
+issue numbering against the docs actually written during 6A–6D.
+
+**Reversal convergence is fully closed, not remaining work.** Re-confirmed
+directly against the 6B0 entry above: `CONFIRMED SUFFICIENT`, zero
+implementation needed, the backend already derives `reversedBy`
+server-side from `reversalOf` atomically. Any external tracking still
+describing this as open is stale and should be closed as resolved, not
+scheduled.
+
+**Everything 6C's own "explicitly out of scope" list named has now been
+checked item-by-item against actual 6D delivery** (see the table implied
+by this cross-check): startup trigger, connectivity listener, and
+composition-root wiring are all now done. Login-triggered drain, sync
+visibility/recovery UI, and LWW/`accepted` reconciliation remain
+genuinely open — each already correctly deferred rather than
+accidentally dropped. Timers/polling/background sync/service workers
+remain deliberately out of scope, unchanged.
+
+**What remains, assessed by category rather than treated as one
+undifferentiated backlog:**
+- **Sync correctness** (does the synchronization model behave correctly
+  under concurrent multi-device writes?): only LWW/`accepted`
+  reconciliation. This is the one item never actually investigated to a
+  verdict — unlike reversal convergence, which was investigated and
+  closed, LWW has only ever been *flagged* as deferred since Phase 5F,
+  never traced through actual source to determine whether it's even
+  needed or what conflict model the existing backend/domain actually
+  supports.
+- **Application integration** (can a user actually see and interact
+  with sync?): login-triggered drain (blocked on a login UI that
+  doesn't exist) and any sync visibility/recovery surface (deliberately
+  deferred since 6C-0's original planning — "only after reachability
+  works, do not build a broad sync dashboard"). Both are real remaining
+  work, but neither is a synchronization-*correctness* question — they
+  belong to a different branch of concern than LWW, and mixing them
+  into one investigation would blur that distinction.
+
+**Decision, locked:** repair this documentation gap first (this entry),
+then perform a dedicated Phase 6E-0 investigation into LWW/`accepted`
+specifically — tracing the actual current backend model for what
+`accepted` means today, whether real conflict detection exists anywhere,
+and only then determining whether LWW is (a) unnecessary and can be
+explicitly closed, (b) required but needs new backend surface, or (c)
+required and achievable with existing primitives. No implementation
+until that investigation produces a locked contract. Login-triggered
+drain and any sync-visibility UI are explicitly held separate from that
+investigation, to be scoped on their own terms later.
+
+### Phase 6E-0 — LWW / `accepted` investigation — ✅ COMPLETE, contract locked
+
+Investigation-only across five sub-passes (6E-0.1 through 6E-0.4, plus
+this closing lock), no implementation, following the same
+investigate-then-lock discipline as every phase boundary in this
+project. Full narrative not reproduced turn-by-turn here; this entry
+records the final locked contract and the key findings that produced it.
+
+**Is LWW actually needed? Yes — settled, not a design preference.**
+PRD §32 explicitly requires timestamp-based last-write-wins, with a
+worked example comparing two devices' real action timestamps (10:03 AM
+vs. 10:07 AM), not server-arrival order. Traced precisely through
+`productService.js`'s current `upsert()`: zero conflict detection exists
+today — `buildNextProductState()` merges the incoming payload
+unconditionally onto whatever the current document is, and
+`Product.updatedAt` is set only from the server's own clock, never read
+or compared. **Today's actual behavior is last-write-wins by server
+arrival order, not by client-side mutation time** — a real, materially
+different (and per the PRD, incorrect) behavior from what's required,
+not a theoretical gap.
+
+**Field-level, not whole-document.** Because the Product upsert is
+already PATCH-semantics (only fields present in the payload are
+touched), two devices editing *different* fields of the same product
+never actually conflict under existing merge logic. A genuine conflict
+only exists when two payloads include the *same* field key with
+different values. This narrows LWW to exactly the six
+`TRACKED_FIELD_MAP` fields (`name`, `category`, `location`, `tags`,
+`sellingPrice`, `archived`) — the same closed set that already produces
+`ProductChangeEvent`s. Untracked fields (`photoRef`, `unitId`,
+`lowStockThreshold`, `lowStockDisabled`, `marginOverride`,
+`latestPurchaseDate`, `notes`) are explicitly out of LWW scope — no
+`ProductChangeEvent` is ever produced for them, and PRD §32's example
+concerns exactly the tracked-field kind of "metadata conflict."
+
+**`Product` is the sole LWW authority; `accepted` is derived, never an
+input.** Re-confirmed against `ARCHITECTURE.md`'s pre-existing "Metadata
+conflict semantics" section (written before 6E existed): `Product[field]`
+was already documented as "the *result* of applying LWW... not a
+separate opinion," and `accepted` was already documented as mutable —
+"if a later sync reveals an earlier-clock-but-later-arriving write should
+have won, the sync layer... may flip `accepted` flags accordingly." This
+investigation didn't invent the one-way authority principle; it found it
+already locked in prior documentation and confirmed the actual
+implementation doesn't yet honor it.
+
+**`accepted` is computed at read time, not stored/reconciled.** The
+strongest finding of this investigation chain: rather than storing
+`accepted` and building a reconciliation mechanism to keep it correct
+after the fact (which reintroduces exactly the staleness problem the
+whole investigation was trying to solve), `accepted` can be derived
+entirely from comparing each event's own `(timestamp, id)` against
+`Product.fieldTimestamps[field].eventId` at the moment a
+`ProductChangeEvent` is read/listed. This requires **no stored
+`accepted` field at all**, **no reconciliation step**, and **no
+cross-aggregate write from `productService` into the
+`ProductChangeEvent` collection** — eliminating the entire class of
+problem the earlier Model 1/2/3/4 proposals were trying to solve, rather
+than picking the least-bad one among them.
+
+**No `mutationId` needed.** Confirmed by tracing the actual call chain:
+`buildChangeEvents()` already produces `ProductChangeEvent` objects
+carrying their own `id` and `timestamp`, and this array (`changeEvents`)
+is already a parameter of `productRepository.update()`, already in scope
+exactly where `buildProductSyncEntry(product)` is called. No new
+identifier needs generating anywhere — the two pieces of data a
+transport representation needs (`timestamp`, `eventId`) already exist on
+objects already available at the right point in the call chain.
+
+**Duplicate-field-per-mutation is structurally impossible, verified, not
+assumed.** `TRACKED_FIELD_MAP` is a plain object literal;
+`Object.entries()` over it can never yield the same key twice; the one
+and only call site of `buildChangeEvents()` is
+`updateProductUseCase()`, not exported elsewhere. This invariant is
+enforced by JavaScript object semantics, not merely by convention — but
+is still explicitly covered by a focused test in 6E-1, per the review
+practice of not trusting an invariant silently just because it currently
+holds.
+
+---
+
+## Locked 6E contract
+
+### Product schema addition
+
+```
+Product.fieldTimestamps: {
+  [trackedFieldName]: { timestamp: string (ISO), eventId: string }
+}
+```
+
+Added additively to the existing Mongoose schema (`default: {}`) — no
+migration needed; existing documents simply have no entries until their
+first post-6E mutation to a given field. **Legacy/missing entry for a
+field means "no prior LWW state" — the first LWW-aware mutation to that
+field always wins unconditionally**, the only sane interpretation of
+"nothing to compare against."
+
+### Product sync wire contract addition
+
+```
+payload: {
+  ...product,   // existing shape, unchanged
+  fieldMutations: {
+    [trackedFieldName]: { timestamp: string (ISO), eventId: string }
+  }
+}
+```
+
+Only fields that actually changed in *this* mutation appear as keys —
+matches `changeEvents`' own length (zero or more). Derived with a single
+`Object.fromEntries()` over `changeEvents`, inside
+`buildProductSyncEntry(product, changeEvents)` (signature gains a second
+parameter — `changeEvents` is already available at its one call site
+inside `productRepository.update()`, no plumbing needed above that
+point). Neither the domain `Product` object, the domain
+`ProductChangeEvent` object, nor either local Dexie table
+(`products`/`productChangeEvents`) is touched — `fieldMutations` exists
+only inside the `syncQueue` entry's `payload`, the same storage-layer-
+only pattern already proven for `appliedQuantity`/`expectedCurrentQuantity`
+(Phase 6A/6C-1).
+
+### LWW algorithm (per tracked field present in an incoming Product
+mutation's `fieldMutations`)
+
+```
+no existing Product.fieldTimestamps[field]  → accept unconditionally
+incoming.timestamp  >  stored.timestamp     → accept
+incoming.timestamp  <  stored.timestamp     → reject
+incoming.timestamp === stored.timestamp     → atomic server write
+                                                ordering decides (see
+                                                "Equal timestamps" below)
+```
+
+"Accept" means: the field's value is applied to `Product`, and
+`Product.fieldTimestamps[field]` is updated to
+`{timestamp: incoming.timestamp, eventId: incoming.eventId}`. "Reject"
+means: the field is excluded from this write entirely — every other
+field in the same payload that independently passes its own comparison
+is still applied normally (field-level, not whole-payload accept/reject).
+
+**Implementation must be genuinely atomic**, not read-then-compute-then-
+write. The current `productService.js upsert()` pattern
+(`findOne` → compute in application code → `findOneAndUpdate` with a
+plain `$set`) has a real read-then-write race window and cannot
+correctly host this logic as-is — it must be restructured into a single
+`findOneAndUpdate` using a MongoDB aggregation-pipeline update (array
+form, not a plain update document), following the exact pattern already
+proven correct in this codebase by `authService.js`'s refresh-token
+rotation (`$cond`-based conditional field computation inside one atomic
+write, no intermediate state observable by a concurrent request).
+Fixing this race is a required, coupled part of 6E-1, not optional
+cleanup.
+
+### `accepted` — computed, not stored
+
+`ProductChangeEvent.accepted` is **removed as a stored, required schema
+field** and instead computed whenever events are read/listed:
+
+```
+accepted = (event.timestamp === Product.fieldTimestamps[event.field]?.timestamp
+            && event.id === Product.fieldTimestamps[event.field]?.eventId)
+```
+
+No reconciliation mechanism exists or is needed, because nothing is
+stored that could drift from the truth. This is a real, visible change
+to the existing `ProductChangeEvent` schema/API contract (previously:
+stored boolean, always `true`, insert-only; now: schema drops the field
+entirely, `list()` computes it per returned event) — explicitly locked
+here, not an internal implementation detail.
+
+### Equal timestamps
+
+Genuinely no principled tie-breaker exists. A UUID-string comparison
+(`event.id`) was considered and explicitly rejected — mechanically
+deterministic but semantically arbitrary, the same class of problem as
+"server arrival order defeats the purpose of client-timestamp LWW,"
+just relocated to a different field. **Locked behavior: whichever
+write's atomic Mongo update happens to execute second at the database
+level wins** — an acceptable, explicitly-documented ambiguity given
+millisecond-precision timestamps and this app's realistic single-shop,
+low-concurrency usage pattern, not a gap papered over silently.
+
+### Idempotency — unchanged
+
+`clientId` remains solely the identity of one sync-mutation *attempt*,
+for retry-safety. It is not repurposed for LWW correlation in any way —
+this was investigated and explicitly rejected early in this
+investigation chain (Phase 6E-0.2), and nothing in the final locked
+design needs it, confirming that rejection was correct rather than
+merely convenient.
+
+### Losing-device semantics — unchanged from 6E-0.1's original framing
+
+| Concern | In scope for 6E |
+|---|---|
+| Detect stale mutation | ✅ |
+| Record it as not-currently-accepted (via the computed derivation) | ✅ |
+| Preserve the winning server Product state | ✅ |
+| Prevent a stale mutation from overwriting the winner | ✅ |
+| Automatically update the losing device's local state | ❌ |
+| Pull/reconcile remote Product state | ❌ |
+| Conflict UI | ❌ |
+
+ShopStock has no pull/reconciliation mechanism today. A losing device's
+local optimistic state remains stale until some future mechanism
+(explicitly out of 6E's scope) reconciles it. This is stated plainly,
+not implied.
+
+### Proposed implementation decomposition (not yet started)
+
+```
+6E-1a  Product schema — fieldTimestamps addition
+6E-1b  Product sync payload — fieldMutations transport
+6E-1c  Atomic per-field LWW update (productService.js upsert() rewrite)
+6E-1d  ProductChangeEvent — remove stored accepted, compute at read time
+6E-1e  Focused backend tests
+6E-1f  Frontend producer tests (buildProductSyncEntry's new fieldMutations)
+6E-2   Cross-boundary verification — newer/older/tied timestamps, different
+       fields concurrently, same field concurrently, duplicate requests,
+       retries, legacy Product, multiple changed fields in one mutation,
+       Product/Event arriving independently
+6E-3   Regression + documentation closure
+```
+
+No implementation has started. This entry is the lock; 6E-1 begins only
+on explicit go-ahead.
+
 
 ## Phase 7 — Dashboard + classification management UI — NOT STARTED
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
