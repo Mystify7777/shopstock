@@ -701,4 +701,369 @@ describe('products resource', () => {
       assert.equal(count, 0);
     });
   });
+
+  describe('Phase 6E — field-level, timestamp-based LWW', () => {
+    // NOT EXECUTED IN THIS SANDBOX -- same standing limitation noted at
+    // the top of this file.
+    //
+    // Covers, per the locked Phase 6E contract (docs/ARCHITECTURE.md):
+    //   - a new field mutation wins against an absent fieldTimestamps
+    //     entry (legacy Product / first-ever mutation to that field)
+    //   - a newer mutation wins over an older one, REGARDLESS of which
+    //     HTTP request arrives at the server first
+    //   - an older mutation never overwrites a newer one, and leaves
+    //     fieldTimestamps completely unchanged when it loses
+    //   - equal timestamps: whichever atomic write executes second wins
+    //     (not a UUID/clientId tiebreak, not arrival order)
+    //   - two different tracked fields in the same product are
+    //     evaluated completely independently -- one can win while the
+    //     other loses, in either combination
+    //   - multiple winning fields in one request all update atomically
+    //   - fieldMutations is transport-only and NEVER appears as a
+    //     stored Product field
+    //   - fieldTimestamps can never be set directly by a client
+    //   - untracked fields (notes, photoRef, etc.) are completely
+    //     unaffected by any of this
+    //   - quantity remains excluded, exactly as before Phase 6E
+    //
+    // Helper: seed a product directly via the model (bypassing the LWW
+    // endpoint), so each test can establish a known starting
+    // fieldTimestamps state without depending on a prior HTTP call's
+    // timing.
+    async function seedProductWithFieldTimestamps(overrides = {}) {
+      const now = new Date();
+      const doc = await Product.create({
+        _id: 'prod-lww',
+        ownerId: OWNER_A,
+        name: 'Original Name',
+        sellingPrice: 100,
+        categoryId: 'original-category',
+        locationIds: [],
+        tagIds: [],
+        archived: false,
+        quantity: 0,
+        lowStockDisabled: false,
+        createdAt: now,
+        updatedAt: now,
+        fieldTimestamps: {},
+        ...overrides
+      });
+      return doc;
+    }
+
+    test('a new field mutation wins against an absent fieldTimestamps entry', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 125,
+          fieldMutations: {
+            sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' }
+          }
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.sellingPrice, 125);
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 125);
+      assert.equal(new Date(stored.fieldTimestamps.get('sellingPrice').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-1');
+    });
+
+    test('a newer mutation wins over an older mutation, arriving in chronological order', async () => {
+      await seedProductWithFieldTimestamps();
+
+      await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 100,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:03:00.000Z', eventId: 'evt-early' } }
+        });
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 125,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-late' } }
+        });
+
+      assert.equal(res.body.sellingPrice, 125);
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 125);
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-late');
+    });
+
+    test('a newer mutation wins even when it arrives at the server BEFORE the older one (out-of-order delivery)', async () => {
+      await seedProductWithFieldTimestamps();
+
+      // 10:07 arrives first.
+      await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 125,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-late' } }
+        });
+
+      // 10:03 arrives second -- must NOT overwrite the newer value.
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 100,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:03:00.000Z', eventId: 'evt-early' } }
+        });
+
+      assert.equal(res.status, 200);
+      // The response reflects the resulting document -- the stale
+      // mutation's own value never became authoritative.
+      assert.equal(res.body.sellingPrice, 125);
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 125);
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-late');
+      assert.equal(new Date(stored.fieldTimestamps.get('sellingPrice').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+    });
+
+    test('the adversarial case: an older client mutation must never overwrite a newer server-authoritative value', async () => {
+      // Product currently: name = "Server Winner", fieldTimestamps.name = T2 (10:07)
+      // Incoming: name = "Stale Client Value", fieldMutations.name = T1 (10:03)
+      // -> name remains "Server Winner"; fieldTimestamps.name remains T2.
+      await seedProductWithFieldTimestamps({
+        name: 'Server Winner',
+        fieldTimestamps: { name: { timestamp: new Date('2026-09-14T10:07:00.000Z'), eventId: 'evt-winner' } }
+      });
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          name: 'Stale Client Value',
+          fieldMutations: { name: { timestamp: '2026-09-14T10:03:00.000Z', eventId: 'evt-stale' } }
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.name, 'Server Winner');
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.name, 'Server Winner');
+      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-winner');
+      assert.equal(new Date(stored.fieldTimestamps.get('name').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+    });
+
+    test('equal timestamps: the second atomic write wins, not a UUID/clientId tiebreak', async () => {
+      await seedProductWithFieldTimestamps();
+      const sameTimestamp = '2026-09-14T10:05:00.000Z';
+
+      await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 100,
+          fieldMutations: { sellingPrice: { timestamp: sameTimestamp, eventId: 'evt-first' } }
+        });
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 200,
+          fieldMutations: { sellingPrice: { timestamp: sameTimestamp, eventId: 'evt-second' } }
+        });
+
+      // The SECOND atomic write (evt-second) wins -- confirmed by
+      // checking which value/eventId is now stored, not by asserting on
+      // wall-clock arrival order (there is none to assert on, by design).
+      assert.equal(res.body.sellingPrice, 200);
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-second');
+    });
+
+    test('field A newer + field B older in the SAME request: A updates, B does not', async () => {
+      await seedProductWithFieldTimestamps({
+        sellingPrice: 100,
+        categoryId: 'existing-category',
+        fieldTimestamps: {
+          sellingPrice: { timestamp: new Date('2026-09-14T09:00:00.000Z'), eventId: 'evt-old-price' },
+          category: { timestamp: new Date('2026-09-14T10:00:00.000Z'), eventId: 'evt-category-baseline' }
+        }
+      });
+
+      // sellingPrice mutation (09:30) is NEWER than its 09:00 baseline -> wins.
+      // category mutation (09:30) is OLDER than its 10:00 baseline -> loses.
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 150,
+          categoryId: 'stale-category',
+          fieldMutations: {
+            sellingPrice: { timestamp: '2026-09-14T09:30:00.000Z', eventId: 'evt-price-wins' },
+            category: { timestamp: '2026-09-14T09:30:00.000Z', eventId: 'evt-category-loses' }
+          }
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.sellingPrice, 150); // wins: 09:30 > 09:00 baseline
+      assert.equal(res.body.categoryId, 'existing-category'); // loses: 09:30 < 10:00 baseline, unchanged
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 150);
+      assert.equal(stored.categoryId, 'existing-category');
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-price-wins');
+      assert.equal(stored.fieldTimestamps.get('category').eventId, 'evt-category-baseline');
+    });
+
+    test('multiple winning fields in one request all update atomically', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          name: 'New Name',
+          sellingPrice: 200,
+          archived: true,
+          fieldMutations: {
+            name: { timestamp: '2026-09-14T10:00:00.000Z', eventId: 'evt-name' },
+            sellingPrice: { timestamp: '2026-09-14T10:00:01.000Z', eventId: 'evt-price' },
+            archived: { timestamp: '2026-09-14T10:00:02.000Z', eventId: 'evt-archived' }
+          }
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.name, 'New Name');
+      assert.equal(res.body.sellingPrice, 200);
+      assert.equal(res.body.archived, true);
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-name');
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-price');
+      assert.equal(stored.fieldTimestamps.get('archived').eventId, 'evt-archived');
+    });
+
+    test('a legacy Product (no fieldTimestamps entries at all) accepts its first tracked mutation', async () => {
+      // Constructed with an explicitly empty fieldTimestamps map,
+      // simulating a Product that existed before Phase 6E.
+      await seedProductWithFieldTimestamps({ fieldTimestamps: {} });
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          name: 'First LWW Mutation',
+          fieldMutations: { name: { timestamp: '2026-09-14T10:00:00.000Z', eventId: 'evt-first-ever' } }
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.name, 'First LWW Mutation');
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-first-ever');
+    });
+
+    test('a request with no fieldMutations at all leaves every tracked field and its fieldTimestamps entry untouched', async () => {
+      await seedProductWithFieldTimestamps({
+        fieldTimestamps: {
+          sellingPrice: { timestamp: new Date('2026-09-14T10:00:00.000Z'), eventId: 'evt-original' }
+        }
+      });
+
+      // Only touches an UNTRACKED field.
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({ notes: 'a note with no LWW implications' });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.sellingPrice, 100); // untouched from seed
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-original');
+      assert.equal(stored.notes, 'a note with no LWW implications');
+    });
+
+    test('fieldMutations never appears as a stored Product field', async () => {
+      await seedProductWithFieldTimestamps();
+
+      await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 125,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' } }
+        });
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(Object.hasOwn(stored, 'fieldMutations'), false);
+    });
+
+    test('a client cannot set fieldTimestamps directly -- rejected with VALIDATION_ERROR', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          sellingPrice: 999,
+          fieldTimestamps: { sellingPrice: { timestamp: '2026-01-01T00:00:00.000Z', eventId: 'attacker-controlled' } }
+        });
+
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 100); // request was rejected outright, nothing applied
+    });
+
+    test('untracked fields are completely unaffected by LWW processing', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({ notes: 'plain untracked update', photoRef: 'photo-123' });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.notes, 'plain untracked update');
+      assert.equal(res.body.photoRef, 'photo-123');
+      // fieldTimestamps has no entries for untracked fields at all.
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.fieldTimestamps.has('notes'), false);
+      assert.equal(stored.fieldTimestamps.has('photoRef'), false);
+    });
+
+    test('quantity remains excluded from LWW/Product mutation, unaffected by fieldMutations presence', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({
+          quantity: 500,
+          sellingPrice: 125,
+          fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-1' } }
+        });
+
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+    });
+
+    test('malformed fieldMutations is rejected with VALIDATION_ERROR before any write occurs', async () => {
+      await seedProductWithFieldTimestamps();
+
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({ sellingPrice: 125, fieldMutations: { sellingPrice: { timestamp: 'not-a-date', eventId: 'evt-1' } } });
+
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+      const stored = await Product.findById('prod-lww').lean();
+      assert.equal(stored.sellingPrice, 100); // unchanged
+    });
+  });
 });
