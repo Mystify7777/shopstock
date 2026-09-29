@@ -57,8 +57,8 @@ export function assertIdentityAgreement(urlId, bodyId) {
 /**
  * The accepted-rejection invariant. Checked by PRESENCE, not truthiness
  * -- `{ accepted: true }` is rejected exactly like `{ accepted: false }`,
- * since the point is that the CLIENT never gets to decide this value for
- * this phase, not merely that a "wrong" value is rejected.
+ * since the point is that the CLIENT never gets to decide this value
+ * (it is computed at read time, Phase 6E-1d), not merely that a "wrong" value is rejected.
  *
  * @throws {AppError} VALIDATION_ERROR
  */
@@ -66,8 +66,8 @@ function assertNoAcceptedInPayload(payload) {
   if (Object.hasOwn(payload, 'accepted')) {
     throw new AppError(
       'VALIDATION_ERROR',
-      'accepted cannot be submitted by the client. It is always true for ' +
-        'events persisted in this phase; LWW resolution is a Phase 6 concern.'
+      'accepted cannot be submitted by the client. It is computed by the ' +
+        "server from the Product's field timestamps."
     );
   }
 }

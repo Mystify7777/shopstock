@@ -26,10 +26,12 @@
 // writing this, not re-derived independently) -- these are the ONLY six
 // Product fields this project's domain considers tracked-for-history.
 //
-// `accepted` is always true for every event this phase persists (see
-// stockEventService.js's assertNoAppliedQuantityInPayload for the same
-// pattern applied to a different field) -- LWW conflict resolution that
-// could someday set this to false is explicitly deferred to Phase 6.
+// `accepted` (Phase 6E-1d) is NOT stored. It is derived at read time by
+// comparing this event's (timestamp, id) against the Product's
+// server-authoritative fieldTimestamps[field] -- see
+// productChangeEventService.js. Earlier (Phase 5F) it was stored as
+// always-true; legacy documents may still carry that stale value, which
+// is never read.
 
 import mongoose from 'mongoose';
 
@@ -50,8 +52,10 @@ const productChangeEventSchema = new mongoose.Schema(
     field: { type: String, required: true, enum: TRACKED_CHANGE_EVENT_FIELDS },
     oldValue: { type: mongoose.Schema.Types.Mixed },
     newValue: { type: mongoose.Schema.Types.Mixed },
-    timestamp: { type: Date, required: true },
-    accepted: { type: Boolean, required: true }
+    timestamp: { type: Date, required: true }
+    // `accepted` is intentionally NOT a stored field (Phase 6E-1d). It is
+    // computed at read time from Product.fieldTimestamps -- see
+    // productChangeEventService.js.
   },
   { _id: false, versionKey: false }
 );

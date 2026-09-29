@@ -37,6 +37,7 @@ import { createApp } from '../src/app.js';
 import { signAccessToken } from '../src/services/tokenService.js';
 import { Product } from '../src/models/productModel.js';
 import { ProductChangeEvent } from '../src/models/productChangeEventModel.js';
+import { createProductChangeEventService } from '../src/services/productChangeEventService.js';
 
 const CONFIG = { jwtAccessSecret: 'test-secret' };
 
@@ -88,7 +89,7 @@ describe('product-change-events resource', () => {
       await seedProduct('prod-b', OWNER_B);
       await ProductChangeEvent.create({
         _id: 'evt-b', ownerId: OWNER_B, productId: 'prod-b', field: 'name',
-        oldValue: 'a', newValue: 'b', timestamp: new Date(), accepted: true
+        oldValue: 'a', newValue: 'b', timestamp: new Date()
       });
 
       const res = await request(testApp()).get('/api/product-change-events').set(authHeader(OWNER_A));
@@ -100,8 +101,8 @@ describe('product-change-events resource', () => {
       await seedProduct('prod-1', OWNER_A);
       await seedProduct('prod-2', OWNER_A);
       await ProductChangeEvent.create([
-        { _id: 'evt-1', ownerId: OWNER_A, productId: 'prod-1', field: 'name', oldValue: 'a', newValue: 'b', timestamp: new Date(), accepted: true },
-        { _id: 'evt-2', ownerId: OWNER_A, productId: 'prod-2', field: 'name', oldValue: 'a', newValue: 'b', timestamp: new Date(), accepted: true }
+        { _id: 'evt-1', ownerId: OWNER_A, productId: 'prod-1', field: 'name', oldValue: 'a', newValue: 'b', timestamp: new Date() },
+        { _id: 'evt-2', ownerId: OWNER_A, productId: 'prod-2', field: 'name', oldValue: 'a', newValue: 'b', timestamp: new Date() }
       ]);
 
       const res = await request(testApp()).get('/api/product-change-events?productId=prod-1').set(authHeader(OWNER_A));
@@ -135,24 +136,13 @@ describe('product-change-events resource', () => {
       assert.equal(res.body.oldValue, 60);
       assert.equal(res.body.newValue, 65);
       assert.equal(new Date(res.body.timestamp).toISOString(), '2026-09-02T14:30:00.000Z');
-      assert.equal(res.body.accepted, true);
+      // Product has no fieldTimestamps entry for this field -> not accepted.
+      assert.equal(res.body.accepted, false);
       assert.equal(res.body.ownerId, OWNER_A);
 
       const stored = await ProductChangeEvent.findById('evt-1').lean();
       assert.ok(stored);
-      assert.equal(stored.accepted, true);
-    });
-
-    test('accepted is always true server-side, even though the client can never submit it', async () => {
-      await seedProduct('prod-1', OWNER_A);
-
-      const res = await request(testApp())
-        .put('/api/product-change-events/evt-1')
-        .set(authHeader(OWNER_A))
-        .send({ productId: 'prod-1', field: 'name', oldValue: 'Milk', newValue: 'Whole Milk', timestamp: '2026-09-02T14:30:00.000Z' });
-
-      assert.equal(res.status, 200);
-      assert.equal(res.body.accepted, true);
+      assert.equal(Object.hasOwn(stored, 'accepted'), false);
     });
 
     test('an explicit null oldValue is accepted and preserved (e.g. a category first being set)', async () => {
@@ -376,6 +366,172 @@ describe('product-change-events resource', () => {
       const after = await Product.findById('prod-1').lean();
       assert.equal(after.name, before.name, 'the Product.name field itself must be unchanged -- only the historical event record is written');
       assert.deepEqual(after.updatedAt, before.updatedAt, 'Product.updatedAt must not be bumped by an unrelated change-event write');
+    });
+  });
+
+  describe('Phase 6E-1d — accepted is computed at read time from Product.fieldTimestamps', () => {
+    const TS = '2026-09-02T14:30:00.000Z';
+    const body = (over = {}) => ({
+      productId: 'prod-1', field: 'sellingPrice', oldValue: 60, newValue: 65, timestamp: TS, ...over
+    });
+    const put = (id, payload, owner = OWNER_A) =>
+      request(testApp()).put(`/api/product-change-events/${id}`).set(authHeader(owner)).send(payload);
+    const setStamp = (field, timestamp, eventId, productId = 'prod-1') =>
+      Product.updateOne({ _id: productId }, { $set: { [`fieldTimestamps.${field}`]: { timestamp: new Date(timestamp), eventId } } });
+    const listFor = async (productId = 'prod-1') =>
+      (await request(testApp()).get('/api/product-change-events').query({ productId }).set(authHeader(OWNER_A))).body;
+
+    test('event matching the Product field timestamp AND eventId -> accepted: true (PUT response and list)', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', TS, 'evt-1');
+      const res = await put('evt-1', body());
+      assert.equal(res.body.accepted, true);
+      assert.equal((await listFor())[0].accepted, true);
+    });
+
+    test('older event superseded by a newer Product mutation -> accepted: false', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', '2026-09-02T14:35:00.000Z', 'evt-newer');
+      const res = await put('evt-old', body());
+      assert.equal(res.body.accepted, false);
+      assert.equal((await listFor())[0].accepted, false);
+    });
+
+    test('same timestamp but different eventId -> accepted: false', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', TS, 'some-other-event');
+      const res = await put('evt-1', body());
+      assert.equal(res.body.accepted, false);
+    });
+
+    test('field with no current Product timestamp -> accepted: false', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      const res = await put('evt-1', body({ field: 'name', oldValue: 'a', newValue: 'b' }));
+      assert.equal(res.body.accepted, false);
+    });
+
+    test('acceptance is evaluated per field, independently', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', TS, 'evt-price');
+      await setStamp('name', '2026-09-02T15:00:00.000Z', 'evt-name-newer');
+      await put('evt-price', body());
+      await put('evt-name', body({ field: 'name', oldValue: 'a', newValue: 'b' }));
+      const byId = Object.fromEntries((await listFor()).map((e) => [e._id, e.accepted]));
+      assert.deepEqual(byId, { 'evt-price': true, 'evt-name': false });
+    });
+
+    test('category/location/tags events use the event-field key in fieldTimestamps', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('category', TS, 'evt-cat');
+      const res = await put('evt-cat', body({ field: 'category', oldValue: null, newValue: 'c1' }));
+      assert.equal(res.body.accepted, true);
+    });
+
+    test('the stored Mongo event has no authoritative accepted field', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await put('evt-1', body());
+      const raw = await ProductChangeEvent.collection.findOne({ _id: 'evt-1' });
+      assert.equal(Object.hasOwn(raw, 'accepted'), false);
+    });
+
+    test('a stale stored accepted on a legacy document cannot control the response', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await ProductChangeEvent.collection.insertOne({
+        _id: 'evt-legacy', ownerId: OWNER_A, productId: 'prod-1', field: 'name',
+        oldValue: 'a', newValue: 'b', timestamp: new Date(TS), accepted: true
+      });
+      const item = (await listFor()).find((e) => e._id === 'evt-legacy');
+      assert.equal(item.accepted, false); // no Product timestamp -> not accepted
+      const retry = await put('evt-legacy', body({ field: 'name', oldValue: 'a', newValue: 'b' }));
+      assert.equal(retry.body.accepted, false);
+    });
+
+    test('client-supplied accepted (true or false) is rejected and never influences the result', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      for (const accepted of [true, false]) {
+        const res = await put(`evt-${accepted}`, body({ accepted }));
+        assert.equal(res.status, 400);
+        assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+      }
+      assert.equal(await ProductChangeEvent.countDocuments({}), 0);
+    });
+
+    test('persisting an event does not mutate the Product (including fieldTimestamps)', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', '2026-09-02T14:35:00.000Z', 'evt-x');
+      const before = await Product.collection.findOne({ _id: 'prod-1' });
+      await put('evt-1', body());
+      const after = await Product.collection.findOne({ _id: 'prod-1' });
+      assert.deepEqual(after, before);
+    });
+
+    test('idempotent retry returns the same event, no second write; accepted reflects current Product state', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      const first = await put('evt-1', body());
+      assert.equal(first.body.accepted, false);
+      await setStamp('sellingPrice', TS, 'evt-1'); // Product LWW now records this event as the winner
+      const retry = await put('evt-1', body());
+      assert.equal(retry.status, 200);
+      assert.equal(retry.body.accepted, true);
+      assert.equal(await ProductChangeEvent.countDocuments({}), 1);
+    });
+
+    test('retry after the Product is gone still succeeds as a no-op (accepted: false)', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await put('evt-1', body());
+      await Product.deleteOne({ _id: 'prod-1' });
+      const retry = await put('evt-1', body());
+      assert.equal(retry.status, 200);
+      assert.equal(retry.body.accepted, false);
+    });
+
+    test('ownership: another owner cannot see or influence acceptance; NOT_FOUND / CONFLICT unchanged', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await setStamp('sellingPrice', TS, 'evt-1');
+      await put('evt-1', body());
+      const otherList = await request(testApp()).get('/api/product-change-events').set(authHeader(OWNER_B));
+      assert.deepEqual(otherList.body, []);
+      const notFound = await put('evt-b', body(), OWNER_B);
+      assert.equal(notFound.status, 404);
+      const collision = await put('evt-1', body({ productId: 'prod-b' }), OWNER_B);
+      assert.ok([404, 409].includes(collision.status));
+    });
+
+    test('PUT response accepted uses a fresh Product read: a Product LWW write landing between the validation read and the insert is reflected', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      // Deterministic interleaving: the Product's LWW state is updated
+      // right after the event insert commits, i.e. after the earlier
+      // validation read but before the response is computed.
+      const racingEventModel = {
+        find: ProductChangeEvent.find.bind(ProductChangeEvent),
+        findOne: ProductChangeEvent.findOne.bind(ProductChangeEvent),
+        create: async (doc) => {
+          const created = await ProductChangeEvent.create(doc);
+          await setStamp('sellingPrice', TS, 'evt-1');
+          return created;
+        }
+      };
+      const svc = createProductChangeEventService(racingEventModel, Product);
+      const result = await svc.processEvent(OWNER_A, 'evt-1', body());
+      assert.equal(result.accepted, true);
+    });
+
+    test('arrival order: event persisted BEFORE the Product upsert, accepted flips true once the Product LWW lands', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      const ev = await put('evt-1', body());
+      assert.equal(ev.body.accepted, false);
+      const up = await request(testApp()).put('/api/products/prod-1').set(authHeader(OWNER_A))
+        .send({ sellingPrice: 65, fieldMutations: { sellingPrice: { timestamp: TS, eventId: 'evt-1' } } });
+      assert.equal(up.status, 200);
+      assert.equal((await listFor())[0].accepted, true);
+    });
+
+    test('arrival order: Product upsert BEFORE the event -> accepted: true on first persist', async () => {
+      await seedProduct('prod-1', OWNER_A);
+      await request(testApp()).put('/api/products/prod-1').set(authHeader(OWNER_A))
+        .send({ sellingPrice: 65, fieldMutations: { sellingPrice: { timestamp: TS, eventId: 'evt-1' } } });
+      const ev = await put('evt-1', body());
+      assert.equal(ev.body.accepted, true);
     });
   });
 });

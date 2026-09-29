@@ -15,7 +15,7 @@
 //        no insert attempt
 //   3. verify referenced Product exists and belongs to this owner
 //        missing -> NOT_FOUND
-//   4. insert event: ownerId = authenticated user, accepted = true
+//   4. insert event: ownerId = authenticated user (accepted is NOT stored)
 //   5. duplicate-key collision (cross-owner _id) -> CONFLICT
 //
 // No transaction/session needed -- this is a single-document insert,
@@ -37,6 +37,32 @@ import {
 const MONGO_DUPLICATE_KEY_ERROR_CODE = 11000;
 
 /**
+ * Phase 6E-1d: `accepted` is computed, never stored or client-supplied.
+ * An event is accepted iff it is exactly the mutation the Product's
+ * server-authoritative LWW state currently records for that field:
+ *
+ *   event.timestamp === Product.fieldTimestamps[event.field].timestamp
+ *   && event.id     === Product.fieldTimestamps[event.field].eventId
+ *
+ * No Product, no entry, or any mismatch -> false.
+ */
+export function computeAccepted(event, product) {
+  const map = product?.fieldTimestamps;
+  const entry = map instanceof Map ? map.get(event.field) : map?.[event.field];
+  if (!entry || !entry.timestamp) return false;
+  return (
+    new Date(entry.timestamp).getTime() === new Date(event.timestamp).getTime() &&
+    entry.eventId === event._id
+  );
+}
+
+// Shape the API response: `_id` stays as-is (existing behavior); any
+// legacy stored `accepted` is overwritten by the computed value.
+function withAccepted(event, product) {
+  return { ...event, accepted: computeAccepted(event, product) };
+}
+
+/**
  * @param {import('mongoose').Model} ProductChangeEventModel
  * @param {import('mongoose').Model} ProductModel
  */
@@ -52,7 +78,20 @@ export function createProductChangeEventService(ProductChangeEventModel, Product
     const { productId } = options;
     const filter = { ownerId };
     if (productId) filter.productId = productId;
-    return ProductChangeEventModel.find(filter).sort({ timestamp: 1 }).lean();
+    const events = await ProductChangeEventModel.find(filter).sort({ timestamp: 1 }).lean();
+    if (events.length === 0) return [];
+    const productIds = [...new Set(events.map((e) => e.productId))];
+    const products = await ProductModel.find({ _id: { $in: productIds }, ownerId })
+      .select('fieldTimestamps')
+      .lean();
+    const byId = new Map(products.map((p) => [p._id, p]));
+    return events.map((e) => withAccepted(e, byId.get(e.productId)));
+  }
+
+  // Read-only Product fetch used ONLY to compute `accepted`. Never
+  // throws for a missing Product and never gates idempotency.
+  async function findProductForAcceptance(ownerId, productId) {
+    return ProductModel.findOne({ _id: productId, ownerId }).select('fieldTimestamps').lean();
   }
 
   /**
@@ -78,7 +117,7 @@ export function createProductChangeEventService(ProductChangeEventModel, Product
     // Step 2 -- idempotency check, FIRST, before the Product lookup.
     const existing = await ProductChangeEventModel.findOne({ _id: urlId, ownerId }).lean();
     if (existing) {
-      return existing;
+      return withAccepted(existing, await findProductForAcceptance(ownerId, existing.productId));
     }
 
     // Step 3 -- referenced Product must exist and belong to this owner.
@@ -104,13 +143,14 @@ export function createProductChangeEventService(ProductChangeEventModel, Product
       field: validated.field,
       oldValue: validated.oldValue,
       newValue: validated.newValue,
-      timestamp: new Date(validated.timestamp),
-      accepted: true
+      timestamp: new Date(validated.timestamp)
     };
 
     try {
       await ProductChangeEventModel.create(eventDoc);
-      return eventDoc;
+      // Fresh read: the Product snapshot from step 3 may be stale by now
+      // (a Product LWW write can land between that read and this insert).
+      return withAccepted(eventDoc, await findProductForAcceptance(ownerId, validated.productId));
     } catch (err) {
       if (err && err.code === MONGO_DUPLICATE_KEY_ERROR_CODE) {
         throw new AppError(

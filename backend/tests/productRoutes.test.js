@@ -769,8 +769,8 @@ describe('products resource', () => {
 
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.sellingPrice, 125);
-      assert.equal(new Date(stored.fieldTimestamps.get('sellingPrice').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-1');
+      assert.equal(new Date(stored.fieldTimestamps['sellingPrice'].timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-1');
     });
 
     test('a newer mutation wins over an older mutation, arriving in chronological order', async () => {
@@ -795,7 +795,7 @@ describe('products resource', () => {
       assert.equal(res.body.sellingPrice, 125);
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.sellingPrice, 125);
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-late');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-late');
     });
 
     test('a newer mutation wins even when it arrives at the server BEFORE the older one (out-of-order delivery)', async () => {
@@ -826,8 +826,8 @@ describe('products resource', () => {
 
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.sellingPrice, 125);
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-late');
-      assert.equal(new Date(stored.fieldTimestamps.get('sellingPrice').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-late');
+      assert.equal(new Date(stored.fieldTimestamps['sellingPrice'].timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
     });
 
     test('the adversarial case: an older client mutation must never overwrite a newer server-authoritative value', async () => {
@@ -852,8 +852,8 @@ describe('products resource', () => {
 
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.name, 'Server Winner');
-      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-winner');
-      assert.equal(new Date(stored.fieldTimestamps.get('name').timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
+      assert.equal(stored.fieldTimestamps['name'].eventId, 'evt-winner');
+      assert.equal(new Date(stored.fieldTimestamps['name'].timestamp).toISOString(), '2026-09-14T10:07:00.000Z');
     });
 
     test('equal timestamps: the second atomic write wins, not a UUID/clientId tiebreak', async () => {
@@ -881,7 +881,7 @@ describe('products resource', () => {
       // wall-clock arrival order (there is none to assert on, by design).
       assert.equal(res.body.sellingPrice, 200);
       const stored = await Product.findById('prod-lww').lean();
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-second');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-second');
     });
 
     test('field A newer + field B older in the SAME request: A updates, B does not', async () => {
@@ -915,8 +915,8 @@ describe('products resource', () => {
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.sellingPrice, 150);
       assert.equal(stored.categoryId, 'existing-category');
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-price-wins');
-      assert.equal(stored.fieldTimestamps.get('category').eventId, 'evt-category-baseline');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-price-wins');
+      assert.equal(stored.fieldTimestamps['category'].eventId, 'evt-category-baseline');
     });
 
     test('multiple winning fields in one request all update atomically', async () => {
@@ -942,9 +942,9 @@ describe('products resource', () => {
       assert.equal(res.body.archived, true);
 
       const stored = await Product.findById('prod-lww').lean();
-      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-name');
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-price');
-      assert.equal(stored.fieldTimestamps.get('archived').eventId, 'evt-archived');
+      assert.equal(stored.fieldTimestamps['name'].eventId, 'evt-name');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-price');
+      assert.equal(stored.fieldTimestamps['archived'].eventId, 'evt-archived');
     });
 
     test('a legacy Product (no fieldTimestamps entries at all) accepts its first tracked mutation', async () => {
@@ -963,7 +963,7 @@ describe('products resource', () => {
       assert.equal(res.status, 200);
       assert.equal(res.body.name, 'First LWW Mutation');
       const stored = await Product.findById('prod-lww').lean();
-      assert.equal(stored.fieldTimestamps.get('name').eventId, 'evt-first-ever');
+      assert.equal(stored.fieldTimestamps['name'].eventId, 'evt-first-ever');
     });
 
     test('a request with no fieldMutations at all leaves every tracked field and its fieldTimestamps entry untouched', async () => {
@@ -982,7 +982,7 @@ describe('products resource', () => {
       assert.equal(res.status, 200);
       assert.equal(res.body.sellingPrice, 100); // untouched from seed
       const stored = await Product.findById('prod-lww').lean();
-      assert.equal(stored.fieldTimestamps.get('sellingPrice').eventId, 'evt-original');
+      assert.equal(stored.fieldTimestamps['sellingPrice'].eventId, 'evt-original');
       assert.equal(stored.notes, 'a note with no LWW implications');
     });
 
@@ -1032,8 +1032,8 @@ describe('products resource', () => {
       assert.equal(res.body.photoRef, 'photo-123');
       // fieldTimestamps has no entries for untracked fields at all.
       const stored = await Product.findById('prod-lww').lean();
-      assert.equal(stored.fieldTimestamps.has('notes'), false);
-      assert.equal(stored.fieldTimestamps.has('photoRef'), false);
+      assert.equal(Object.hasOwn(stored.fieldTimestamps, 'notes'), false);
+      assert.equal(Object.hasOwn(stored.fieldTimestamps, 'photoRef'), false);
     });
 
     test('quantity remains excluded from LWW/Product mutation, unaffected by fieldMutations presence', async () => {
@@ -1064,6 +1064,50 @@ describe('products resource', () => {
       assert.equal(res.body.error.code, 'VALIDATION_ERROR');
       const stored = await Product.findById('prod-lww').lean();
       assert.equal(stored.sellingPrice, 100); // unchanged
+    });
+
+    // fieldMutations carries only { timestamp, eventId }. An entry whose
+    // corresponding Product value is absent from the payload is malformed
+    // and must be rejected -- never written as null.
+    for (const [eventField, productField, value] of [
+      ['name', 'name', 'New Name'],
+      ['category', 'categoryId', 'new-category'],
+      ['location', 'locationIds', ['loc-1']],
+      ['tags', 'tagIds', ['tag-1']],
+      ['sellingPrice', 'sellingPrice', 125],
+      ['archived', 'archived', true]
+    ]) {
+      test(`fieldMutations.${eventField} without "${productField}" in the payload is VALIDATION_ERROR and modifies nothing`, async () => {
+        await seedProductWithFieldTimestamps();
+        const before = await Product.collection.findOne({ _id: 'prod-lww' });
+        const mutation = { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-x' };
+
+        const missing = await request(testApp())
+          .put('/api/products/prod-lww')
+          .set(authHeader(OWNER_A))
+          .send({ notes: 'should not persist', fieldMutations: { [eventField]: mutation } });
+        assert.equal(missing.status, 400);
+        assert.equal(missing.body.error.code, 'VALIDATION_ERROR');
+        assert.deepEqual(await Product.collection.findOne({ _id: 'prod-lww' }), before);
+
+        // Control: the same mutation WITH its value is accepted.
+        const ok = await request(testApp())
+          .put('/api/products/prod-lww')
+          .set(authHeader(OWNER_A))
+          .send({ [productField]: value, fieldMutations: { [eventField]: mutation } });
+        assert.equal(ok.status, 200);
+        assert.deepEqual(ok.body[productField], value);
+      });
+    }
+
+    test('a fieldMutations entry with an explicit null value present is allowed (presence, not truthiness)', async () => {
+      await seedProductWithFieldTimestamps();
+      const res = await request(testApp())
+        .put('/api/products/prod-lww')
+        .set(authHeader(OWNER_A))
+        .send({ categoryId: null, fieldMutations: { category: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-null' } } });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.categoryId, null);
     });
   });
 });

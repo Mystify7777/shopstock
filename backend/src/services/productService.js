@@ -182,7 +182,7 @@ function assertNoFieldTimestampsInPayload(payload) {
  *
  * @throws {AppError} VALIDATION_ERROR
  */
-function assertValidFieldMutations(fieldMutations) {
+function assertValidFieldMutations(fieldMutations, payload) {
   if (fieldMutations === undefined) return;
   if (fieldMutations === null || typeof fieldMutations !== 'object' || Array.isArray(fieldMutations)) {
     throw new AppError('VALIDATION_ERROR', 'fieldMutations must be an object.');
@@ -199,6 +199,16 @@ function assertValidFieldMutations(fieldMutations) {
     }
     if (typeof entry.eventId !== 'string' || entry.eventId.length === 0) {
       throw new AppError('VALIDATION_ERROR', `fieldMutations.${field}.eventId must be a non-empty string.`);
+    }
+    // fieldMutations carries only timing/identity metadata, never the
+    // value. A mutation entry without its corresponding Product value in
+    // the payload is malformed -- the pipeline would otherwise write null.
+    const productField = FIELD_MUTATION_TO_PRODUCT_FIELD[field];
+    if (!Object.hasOwn(payload, productField)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `fieldMutations.${field} requires the corresponding "${productField}" value in the request body.`
+      );
     }
   }
 }
@@ -224,7 +234,7 @@ function assertValidPayload(payload, existingProduct) {
   assertNoQuantityInPayload(payload);
   assertNoChangeEventsInPayload(payload);
   assertNoFieldTimestampsInPayload(payload);
-  assertValidFieldMutations(payload.fieldMutations);
+  assertValidFieldMutations(payload.fieldMutations, payload);
 
   const effectiveName = Object.hasOwn(payload, 'name')
     ? payload.name
@@ -322,9 +332,11 @@ function buildNonLwwPatch(payload) {
  *     the first write's already-committed stored.timestamp, and $gte
  *     lets it win)
  *
- * A tracked field NOT present in fieldMutations is left completely
- * untouched -- both its Product value and its fieldTimestamps entry are
- * carried through unchanged from the current document.
+ * A tracked field NOT present in fieldMutations keeps its
+ * fieldTimestamps entry unchanged. Its Product value is carried through
+ * from the current document if the payload omits it, or applied
+ * unconditionally if the payload includes it (create path / clients that
+ * send no fieldMutations) -- no LWW comparison happens without a mutation.
  *
  * `fieldTimestamps` is rebuilt as ONE plain object per write (six known,
  * fixed keys -- this project doesn't need a dynamic $setField chain,
@@ -345,59 +357,108 @@ function buildLwwPipelineStage(fieldMutations = {}, payload = {}) {
   const productFieldUpdates = {};
   const fieldTimestampEntries = {};
 
+  // Stage 1 guarantees $fieldTimestamps is an object, but $ifNull keeps
+  // this expression safe on its own too.
+  const storedMap = { $ifNull: ['$fieldTimestamps', {}] };
+
   for (const eventField of LWW_TRACKED_EVENT_FIELDS) {
     const productField = FIELD_MUTATION_TO_PRODUCT_FIELD[eventField];
     const mutation = fieldMutations[eventField];
-    const storedTimestampExpr = {
-      $getField: {
-        field: 'timestamp',
-        input: { $getField: { field: productField, input: '$fieldTimestamps' } }
-      }
-    };
-    const storedEntryExpr = { $getField: { field: productField, input: '$fieldTimestamps' } };
+    // fieldTimestamps is keyed by the EVENT field name (category,
+    // location, tags, ...), per the locked contract -- not the Product
+    // document field name (categoryId, ...).
+    const storedEntryExpr = { $getField: { field: eventField, input: storedMap } };
+    const storedTimestampExpr = { $getField: { field: 'timestamp', input: storedEntryExpr } };
 
     if (!mutation) {
-      // No mutation for this field in this request -- leave both the
-      // Product field and its fieldTimestamps entry completely
-      // untouched.
-      productFieldUpdates[productField] = `$${productField}`;
-      fieldTimestampEntries[productField] = storedEntryExpr;
+      // No LWW mutation for this field. If the payload nonetheless
+      // carries the field (the create path, or a client that sends no
+      // fieldMutations), it is applied unconditionally, exactly as
+      // before Phase 6E, and its fieldTimestamps entry is left alone.
+      // If the payload omits it, the current document value survives.
+      productFieldUpdates[productField] = Object.hasOwn(payload, productField)
+        ? { $literal: payload[productField] }
+        : `$${productField}`;
+      fieldTimestampEntries[eventField] = storedEntryExpr;
       continue;
     }
 
-    const incomingTimestamp = { $toDate: mutation.timestamp };
+    // Passed as a JS Date (serialized as a BSON date literal), never a
+    // string the pipeline could interpret as a field path.
+    const incomingTimestamp = new Date(mutation.timestamp);
     const incomingValue = Object.hasOwn(payload, productField) ? payload[productField] : null;
 
+    // A missing/null stored timestamp means "no prior LWW mutation" ->
+    // incoming wins. $type is used instead of comparing to `undefined`,
+    // which the driver would drop or serialize as null.
     const acceptCondition = {
       $or: [
-        { $eq: [storedTimestampExpr, undefined] },
+        { $in: [{ $type: storedTimestampExpr }, ['missing', 'null']] },
         { $gte: [incomingTimestamp, storedTimestampExpr] }
       ]
     };
 
     productFieldUpdates[productField] = {
-      $cond: {
-        if: acceptCondition,
-        then: { $literal: incomingValue },
-        else: `$${productField}`
-      }
+      $cond: { if: acceptCondition, then: { $literal: incomingValue }, else: `$${productField}` }
     };
 
-    fieldTimestampEntries[productField] = {
+    fieldTimestampEntries[eventField] = {
       $cond: {
         if: acceptCondition,
-        then: { timestamp: incomingTimestamp, eventId: mutation.eventId },
+        then: { timestamp: incomingTimestamp, eventId: { $literal: mutation.eventId } },
         else: storedEntryExpr
       }
     };
   }
 
+  // Preserve any entries already present that this stage does not manage
+  // (defensive: keeps unknown/legacy keys rather than dropping them).
   return {
     $set: {
       ...productFieldUpdates,
-      fieldTimestamps: fieldTimestampEntries
+      fieldTimestamps: { $mergeObjects: [storedMap, fieldTimestampEntries] }
     }
   };
+}
+
+/**
+ * Stage 1 of the atomic pipeline: establish defaults and apply the
+ * non-LWW patch, using ONLY the current MongoDB document as the source of
+ * existing state. Nothing read by the earlier JS pre-read is written back.
+ *
+ * `$ifNull` distinguishes "field absent/null on the current document"
+ * (genuine insert, or a legacy document) from "field has a value" -- so
+ * defaults apply on insert and NEVER overwrite an existing value.
+ * (Every default here is itself null/false/[]/0/{} or `now`, so treating
+ * an explicit null on an existing document as "use the default" is
+ * lossless.) Payload values are wrapped in $literal so a string such as
+ * "$foo" is stored as text, not evaluated as a field path.
+ */
+function buildBaseAndPatchStage(ownerId, urlId, nonLwwPatch, now) {
+  const set = {
+    _id: urlId,
+    ownerId,
+    name: { $ifNull: ['$name', null] },
+    photoRef: { $ifNull: ['$photoRef', null] },
+    quantity: { $ifNull: ['$quantity', 0] },
+    unitId: { $ifNull: ['$unitId', null] },
+    lowStockThreshold: { $ifNull: ['$lowStockThreshold', null] },
+    lowStockDisabled: { $ifNull: ['$lowStockDisabled', false] },
+    categoryId: { $ifNull: ['$categoryId', null] },
+    locationIds: { $ifNull: ['$locationIds', []] },
+    tagIds: { $ifNull: ['$tagIds', []] },
+    sellingPrice: { $ifNull: ['$sellingPrice', null] },
+    marginOverride: { $ifNull: ['$marginOverride', null] },
+    latestPurchaseDate: { $ifNull: ['$latestPurchaseDate', null] },
+    notes: { $ifNull: ['$notes', null] },
+    archived: { $ifNull: ['$archived', false] },
+    createdAt: { $ifNull: ['$createdAt', now] },
+    fieldTimestamps: { $ifNull: ['$fieldTimestamps', {}] }
+  };
+  for (const [field, value] of Object.entries(nonLwwPatch)) {
+    set[field] = { $literal: value };
+  }
+  return { $set: set };
 }
 
 /**
@@ -442,48 +503,22 @@ export function createProductService(ProductModel) {
     const { fieldMutations, ...restOfPayload } = payload;
     const nonLwwPatch = buildNonLwwPatch(restOfPayload);
 
-    const base = existingProduct ?? {
-      _id: urlId,
-      ownerId,
-      name: null,
-      photoRef: null,
-      quantity: 0,
-      unitId: null,
-      lowStockThreshold: null,
-      lowStockDisabled: false,
-      categoryId: null,
-      locationIds: [],
-      tagIds: [],
-      sellingPrice: null,
-      marginOverride: null,
-      latestPurchaseDate: null,
-      notes: null,
-      archived: false,
-      createdAt: now,
-      fieldTimestamps: {}
-    };
-
+    // The pre-read above is used ONLY for the effective name/photoRef
+    // identity check. It is never a source of state for the write:
+    // every existing value used by the pipeline is read from the current
+    // MongoDB document inside the atomic update itself.
     try {
       const doc = await ProductModel.findOneAndUpdate(
         { _id: urlId, ownerId },
         [
-          // Stage 1: establish the base document (defaults on a genuine
-          // create; the existing document's own fields otherwise), then
-          // apply every non-LWW field. A pipeline-based upsert does NOT
-          // apply schema defaults the way a plain $set update does, so
-          // `base` supplies them explicitly here.
-          { $set: { ...base, ...nonLwwPatch } },
-          // Stage 2: the atomic LWW comparison/write for the six tracked
-          // fields, entirely independent of stage 1's non-tracked fields.
+          buildBaseAndPatchStage(ownerId, urlId, nonLwwPatch, now),
           buildLwwPipelineStage(fieldMutations, restOfPayload),
-          // Stage 3: server-owned bookkeeping, applied unconditionally,
-          // after both of the above -- _id/ownerId/quantity can never be
-          // touched by anything in stages 1-2 regardless of payload
-          // contents, and updatedAt always reflects this request's
-          // server-received time (never the LWW clock -- see
-          // docs/ARCHITECTURE.md's Phase 6E entry on why updatedAt must
-          // never be conflated with fieldTimestamps).
-          { $set: { _id: urlId, ownerId, updatedAt: now, quantity: base.quantity ?? 0 } }
+          // Server-owned bookkeeping. quantity is deliberately NOT
+          // touched here -- stage 1 already carries the CURRENT
+          // document's quantity forward (or 0 on insert), so a
+          // concurrent stock event can never be rolled back by this
+          // write. updatedAt is server receipt time, never the LWW clock.
+          { $set: { _id: urlId, ownerId, updatedAt: now } }
         ],
         { upsert: true, new: true, runValidators: true }
       ).lean();
