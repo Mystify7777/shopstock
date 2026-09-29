@@ -662,4 +662,133 @@ describe('stock-events resource', () => {
       assert.equal(product.quantity, 2, 'quantity must remain at the post-REMOVE value, not restored by the failed reversal');
     });
   });
+
+  describe('Phase 6F -- reversal synchronization contract (backend half)', () => {
+    // NOT EXECUTED IN THE AUTHORING SANDBOX (MongoMemoryReplSet download
+    // blocked) -- must be run locally.
+    //
+    // Contract: the reversal StockEvent is the synchronized fact. The
+    // backend establishes original.reversedBy atomically as part of
+    // accepting it. reversedBy is derived relationship state, never an
+    // independently submitted mutation. Required client ordering is
+    // original-before-reversal (guaranteed by the local FIFO queue,
+    // proven in frontend reversalSync.integration.test.js).
+    const put = (id, body, owner = OWNER_A) =>
+      request(testApp()).put(`/api/stock-events/${id}`).set(authHeader(owner)).send(body);
+
+    const REMOVE = { productId: 'prod-1', type: 'REMOVE', quantity: 3, recordedAt: '2026-09-02T14:30:00.000Z', expectedCurrentQuantity: 5 };
+    // Shaped like the frontend's actual wire body for a reversal
+    // (createSyncRequest output): includes the domain `id` and
+    // `reversedBy: null`, and NO appliedQuantity.
+    const reversalWire = (over = {}) => ({
+      id: 'evt-reversal', productId: 'prod-1', type: 'ADD', quantity: 3,
+      costPerUnit: null, purchaseDate: null, recordedAt: '2026-09-02T15:00:00.000Z',
+      comment: null, reversalOf: 'evt-remove', reversedBy: null, expectedCurrentQuantity: 2, ...over
+    });
+
+    test('A. original then reversal (frontend wire shape): reversal persisted, original.reversedBy set atomically, quantity restored', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      assert.equal((await put('evt-remove', REMOVE)).status, 200);
+      const res = await put('evt-reversal', reversalWire());
+      assert.equal(res.status, 200);
+
+      const original = await StockEvent.findById('evt-remove').lean();
+      const reversal = await StockEvent.findById('evt-reversal').lean();
+      assert.equal(original.reversedBy, 'evt-reversal');
+      assert.equal(reversal.reversalOf, 'evt-remove');
+      assert.equal(reversal.reversedBy, null); // a client-sent reversedBy never becomes authoritative state
+      assert.equal(reversal.appliedQuantity, 3); // server-computed
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 5);
+    });
+
+    test('a client-sent reversedBy on the ORIGINAL event never sets the relationship (only a reversal event can)', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove', { ...REMOVE, reversedBy: 'evt-forged' });
+      const original = await StockEvent.findById('evt-remove').lean();
+      assert.equal(original.reversedBy, null);
+    });
+
+    test('C. idempotent retry of the same reversal: one reversal document, quantity applied once, reversedBy unchanged, existing event returned', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove', REMOVE);
+      const first = await put('evt-reversal', reversalWire());
+      // Retry carries the SAME (now stale) expectedCurrentQuantity, exactly as the client reuses it.
+      const retry = await put('evt-reversal', reversalWire());
+
+      assert.equal(first.status, 200);
+      assert.equal(retry.status, 200);
+      assert.equal(retry.body._id, 'evt-reversal');
+      assert.equal(await StockEvent.countDocuments({ reversalOf: 'evt-remove' }), 1);
+      assert.equal((await StockEvent.findById('evt-remove').lean()).reversedBy, 'evt-reversal');
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 5);
+    });
+
+    test('E. reversal BEFORE its original exists: NOT_FOUND (404), nothing persisted, Product untouched -- no server-side deferral', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      const res = await put('evt-reversal', reversalWire({ expectedCurrentQuantity: 5 }));
+
+      assert.equal(res.status, 404);
+      assert.equal(res.body.error.code, 'NOT_FOUND');
+      assert.equal(await StockEvent.countDocuments({}), 0);
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 5);
+    });
+
+    test('E. the rejected early reversal is not poisoned: once the original exists, the same request succeeds', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-reversal', reversalWire({ expectedCurrentQuantity: 5 })); // 404
+      await put('evt-remove', REMOVE);
+      const res = await put('evt-reversal', reversalWire());
+      assert.equal(res.status, 200);
+      assert.equal((await StockEvent.findById('evt-remove').lean()).reversedBy, 'evt-reversal');
+    });
+
+    test('a reversal referencing another owner\'s event is NOT_FOUND (indistinguishable from nonexistent) and mutates nothing', async () => {
+      await seedProduct('prod-b', OWNER_B, 5);
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove-b', { ...REMOVE, productId: 'prod-b' }, OWNER_B);
+
+      const res = await put('evt-reversal', reversalWire({ reversalOf: 'evt-remove-b', expectedCurrentQuantity: 5 }));
+      assert.equal(res.status, 404);
+      assert.equal((await StockEvent.findById('evt-remove-b').lean()).reversedBy, null);
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 5);
+    });
+
+    test('competing reversals from two devices: the first accepted wins; the second is rejected without mutation (ALREADY_REVERSED when its expectedCurrentQuantity matches)', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove', REMOVE);
+      await put('evt-reversal-a', reversalWire({ id: 'evt-reversal-a' }));
+
+      const loser = await put('evt-reversal-b', reversalWire({ id: 'evt-reversal-b', expectedCurrentQuantity: 5 }));
+      assert.equal(loser.status, 409);
+      assert.equal(loser.body.error.code, 'ALREADY_REVERSED');
+      assert.equal((await StockEvent.findById('evt-remove').lean()).reversedBy, 'evt-reversal-a');
+      assert.equal(await StockEvent.countDocuments({ _id: 'evt-reversal-b' }), 0);
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 5);
+    });
+
+    test('competing reversal with a stale expectedCurrentQuantity is rejected by the concurrency check FIRST (QUANTITY_CONSISTENCY_CONFLICT) -- documents precedence, still no mutation', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove', REMOVE);
+      await put('evt-reversal-a', reversalWire({ id: 'evt-reversal-a' }));
+
+      const loser = await put('evt-reversal-b', reversalWire({ id: 'evt-reversal-b' })); // expected 2, actual 5
+      assert.equal(loser.status, 409);
+      assert.equal(loser.body.error.code, 'QUANTITY_CONSISTENCY_CONFLICT');
+      assert.equal((await StockEvent.findById('evt-remove').lean()).reversedBy, 'evt-reversal-a');
+    });
+
+    test('a reversal is itself reversible as a chain: original.reversedBy stays on the first reversal; the second reversal points at the first', async () => {
+      await seedProduct('prod-1', OWNER_A, 5);
+      await put('evt-remove', REMOVE);
+      await put('evt-reversal-1', reversalWire({ id: 'evt-reversal-1' })); // qty 2 -> 5
+      const res = await put('evt-reversal-2', {
+        id: 'evt-reversal-2', productId: 'prod-1', type: 'REMOVE', quantity: 3,
+        recordedAt: '2026-09-02T16:00:00.000Z', reversalOf: 'evt-reversal-1', expectedCurrentQuantity: 5
+      });
+      assert.equal(res.status, 200);
+      assert.equal((await StockEvent.findById('evt-remove').lean()).reversedBy, 'evt-reversal-1');
+      assert.equal((await StockEvent.findById('evt-reversal-1').lean()).reversedBy, 'evt-reversal-2');
+      assert.equal((await Product.findById('prod-1').lean()).quantity, 2);
+    });
+  });
 });

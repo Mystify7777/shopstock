@@ -133,6 +133,17 @@ function serializeProductBody(payload) {
  */
 function serializeStockEventBody(payload) {
   const { appliedQuantity, ...body } = payload;
+  // Phase 6F: the domain factory always emits `costPerUnit: null` and
+  // `purchaseDate: null` on REMOVE events, but stockEventValidation.js
+  // rejects both keys by PRESENCE on a REMOVE ("only valid for ADD
+  // events"). Without this, every REMOVE -- including the REMOVE that
+  // reverses an ADD -- would be permanently rejected (400) and could
+  // never sync. They carry no information on a REMOVE, so they are
+  // omitted from the wire body only; the queued payload is untouched.
+  if (body.type === 'REMOVE') {
+    delete body.costPerUnit;
+    delete body.purchaseDate;
+  }
   return body;
 }
 

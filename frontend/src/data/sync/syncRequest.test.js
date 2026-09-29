@@ -277,8 +277,26 @@ describe('createSyncRequest', () => {
       expect(body.expectedCurrentQuantity).toBe(5);
     });
 
+    it('omits costPerUnit and purchaseDate from a REMOVE wire body (backend rejects them by presence on REMOVE), leaving the queue payload untouched', () => {
+      const payload = makeStockEventPayload({ type: 'REMOVE' });
+      const entry = makeQueueEntry({ entityType: 'stockEvent', entityId: 'evt-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(Object.hasOwn(body, 'costPerUnit')).toBe(false);
+      expect(Object.hasOwn(body, 'purchaseDate')).toBe(false);
+      expect(entry.payload.costPerUnit).toBeNull();
+      expect(Object.hasOwn(entry.payload, 'purchaseDate')).toBe(true);
+    });
+
+    it('keeps costPerUnit and purchaseDate on an ADD wire body, including explicit nulls', () => {
+      const payload = makeStockEventPayload({ type: 'ADD', costPerUnit: null, purchaseDate: '2026-09-06' });
+      const entry = makeQueueEntry({ entityType: 'stockEvent', entityId: 'evt-1', payload });
+      const { body } = createSyncRequest(entry);
+      expect(body.costPerUnit).toBeNull();
+      expect(body.purchaseDate).toBe('2026-09-06');
+    });
+
     it('preserves every other stockEvent field unchanged', () => {
-      const payload = makeStockEventPayload({ comment: 'Sold to customer' });
+      const payload = makeStockEventPayload({ type: 'ADD', comment: 'Sold to customer' });
       const entry = makeQueueEntry({ entityType: 'stockEvent', entityId: 'evt-1', payload });
       const { body } = createSyncRequest(entry);
       const { appliedQuantity, ...expectedRest } = payload;
