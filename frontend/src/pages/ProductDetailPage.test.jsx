@@ -37,6 +37,7 @@ function renderDetail(productService, stockEventService, id = 'p1') {
         <Routes>
           <Route path="/products/:id" element={<ProductDetailPage />} />
           <Route path="/products/:id/edit" element={<div>Edit product form</div>} />
+          <Route path="/products" element={<div>Product list</div>} />
         </Routes>
       </MemoryRouter>
     </AppProvider>
@@ -52,6 +53,19 @@ const SAMPLE_PRODUCT = {
 };
 
 describe('ProductDetailPage', () => {
+  it('shows Product not found with a working way back to Products when the product does not exist', async () => {
+    const productService = makeMockProductService({
+      getProduct: vi.fn().mockResolvedValue(null)
+    });
+    const stockEventService = makeMockStockEventService();
+    renderDetail(productService, stockEventService, 'missing-id');
+
+    // the alert keeps exactly the original message
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Product not found\.$/);
+    fireEvent.click(screen.getByRole('link', { name: 'Back to Products' }));
+    expect(screen.getByText('Product list')).toBeInTheDocument();
+  });
+
   it('shows a loading state before product resolves', () => {
     const productService = makeMockProductService({
       getProduct: vi.fn(() => new Promise(() => {}))

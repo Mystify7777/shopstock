@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 const read = (name) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8');
 const tokensCss = read('tokens.css');
 const baseCss = read('base.css');
+const shellCss = read('shell.css');
 
 // Parse `--name: value;` declarations from the first :root block only
 // (later blocks are media-query overrides).
@@ -157,6 +158,7 @@ describe('tokens.css: required coverage (Issue #17)', () => {
   it('contains no gradients', () => {
     expect(tokensCss).not.toMatch(/gradient\(/);
     expect(baseCss).not.toMatch(/gradient\(/);
+    expect(shellCss).not.toMatch(/gradient\(/);
   });
 });
 
@@ -219,16 +221,24 @@ describe('tokens.css: WCAG AA contrast', () => {
   });
 });
 
-describe('base.css', () => {
+describe.each([
+  ['base.css', baseCss],
+  ['shell.css', shellCss],
+])('%s', (_name, css) => {
   it('only references tokens that exist in tokens.css', () => {
-    const used = [...baseCss.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]);
+    const used = [...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(0);
     const missing = [...new Set(used)].filter((n) => tokens[n] === undefined);
     expect(missing).toEqual([]);
   });
 
-  it('keeps a visible :focus-visible treatment and never removes outlines globally', () => {
+  it('never removes outlines', () => {
+    expect(css).not.toMatch(/outline:\s*(none|0)\b/);
+  });
+});
+
+describe('base.css focus', () => {
+  it('keeps a visible :focus-visible treatment', () => {
     expect(baseCss).toMatch(/:focus-visible\s*{[^}]*outline:\s*var\(--focus-ring\)/);
-    expect(baseCss).not.toMatch(/outline:\s*(none|0)\b/);
   });
 });

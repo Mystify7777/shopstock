@@ -196,8 +196,11 @@ describe('authManager', () => {
       sessionStore.getRefreshToken.mockResolvedValue('refresh-1');
       authClient.refresh.mockResolvedValue({ accessToken: 'access-2', refreshToken: 'refresh-2' });
       await manager.restoreSession();
+      // 'subscribe' added in Phase 7B (additive status-change notification;
+      // it carries no domain or HTTP capability).
       expect(Object.keys(manager)).toEqual([
         'getStatus', 'getAccessToken', 'login', 'restoreSession', 'refresh', 'logout',
+        'subscribe',
       ]);
     });
 
@@ -424,6 +427,185 @@ describe('authManager', () => {
       sessionStore.getRefreshToken.mockResolvedValue(null);
       await expect(manager.logout()).resolves.toBeUndefined();
       expect(manager.getStatus()).toBe(AUTH_STATUS.UNAUTHENTICATED);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // subscribe (Phase 7B) -- status-transition notification
+  // ---------------------------------------------------------------------------
+
+  describe('subscribe', () => {
+    const creds = { accessToken: 'access-1', refreshToken: 'refresh-1' };
+
+    async function loginOk() {
+      authClient.login.mockResolvedValue(creds);
+      await manager.login('shop', 'pw');
+    }
+
+    it('throws a TypeError for a non-function listener', () => {
+      expect(() => manager.subscribe()).toThrow(TypeError);
+      expect(() => manager.subscribe('nope')).toThrow(TypeError);
+    });
+
+    it('returns an unsubscribe function', () => {
+      expect(typeof manager.subscribe(() => {})).toBe('function');
+    });
+
+    it('notifies with AUTHENTICATED after a successful login', async () => {
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      await loginOk();
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(AUTH_STATUS.AUTHENTICATED);
+    });
+
+    it('reports the new status consistently with getStatus() at call time', async () => {
+      let seen;
+      manager.subscribe(() => {
+        seen = manager.getStatus();
+      });
+      await loginOk();
+      expect(seen).toBe(AUTH_STATUS.AUTHENTICATED);
+    });
+
+    it('does not notify for a failed login', async () => {
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.login.mockRejectedValue(new AuthApiError('UNAUTHORIZED', 'bad', 401));
+      await expect(manager.login('shop', 'wrong')).rejects.toThrow(AuthApiError);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('does not notify when a login replaces an already-authenticated session', async () => {
+      await loginOk();
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.login.mockResolvedValue({ accessToken: 'access-2', refreshToken: 'refresh-2' });
+      await manager.login('shop', 'pw');
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('does not notify when a refresh succeeds and the session stays authenticated', async () => {
+      await loginOk();
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.refresh.mockResolvedValue({ accessToken: 'access-2', refreshToken: 'refresh-2' });
+      await manager.refresh();
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('notifies UNAUTHENTICATED when a mid-use refresh is rejected by the backend', async () => {
+      await loginOk();
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.refresh.mockRejectedValue(new AuthApiError('UNAUTHORIZED', 'revoked', 401));
+      await expect(manager.refresh()).rejects.toThrow(AuthApiError);
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(AUTH_STATUS.UNAUTHENTICATED);
+    });
+
+    it('does NOT notify when a refresh fails only because the network is down', async () => {
+      await loginOk();
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.refresh.mockRejectedValue(new AuthNetworkError(new Error('offline')));
+      await expect(manager.refresh()).rejects.toThrow(AuthNetworkError);
+      expect(listener).not.toHaveBeenCalled();
+      expect(manager.getStatus()).toBe(AUTH_STATUS.AUTHENTICATED);
+    });
+
+    it('notifies AUTHENTICATED when restoreSession succeeds from a persisted token', async () => {
+      sessionStore = makeMockSessionStore('persisted-refresh');
+      manager = createAuthManager({ sessionStore, authClient });
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      authClient.refresh.mockResolvedValue(creds);
+      await manager.restoreSession();
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(AUTH_STATUS.AUTHENTICATED);
+    });
+
+    it('does not notify when restoreSession finds nothing to restore (already unauthenticated)', async () => {
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      await manager.restoreSession();
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('notifies UNAUTHENTICATED exactly once on logout', async () => {
+      await loginOk();
+      authClient.logout.mockResolvedValue(undefined);
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      await manager.logout();
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(AUTH_STATUS.UNAUTHENTICATED);
+    });
+
+    it('still notifies on logout when the server call fails', async () => {
+      await loginOk();
+      authClient.logout.mockRejectedValue(new AuthNetworkError(new Error('offline')));
+      const listener = vi.fn();
+      manager.subscribe(listener);
+      await manager.logout();
+      expect(listener).toHaveBeenCalledWith(AUTH_STATUS.UNAUTHENTICATED);
+    });
+
+    it('delivers to every subscribed listener', async () => {
+      const a = vi.fn();
+      const b = vi.fn();
+      manager.subscribe(a);
+      manager.subscribe(b);
+      await loginOk();
+      expect(a).toHaveBeenCalledWith(AUTH_STATUS.AUTHENTICATED);
+      expect(b).toHaveBeenCalledWith(AUTH_STATUS.AUTHENTICATED);
+    });
+
+    it('stops notifying after unsubscribe, and unsubscribe is idempotent', async () => {
+      const listener = vi.fn();
+      const unsubscribe = manager.subscribe(listener);
+      unsubscribe();
+      expect(() => unsubscribe()).not.toThrow();
+      await loginOk();
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('unsubscribing one listener does not affect another', async () => {
+      const a = vi.fn();
+      const b = vi.fn();
+      const unsubscribeA = manager.subscribe(a);
+      manager.subscribe(b);
+      unsubscribeA();
+      await loginOk();
+      expect(a).not.toHaveBeenCalled();
+      expect(b).toHaveBeenCalledTimes(1);
+    });
+
+    it('a listener that unsubscribes another during delivery does not change this round', async () => {
+      const second = vi.fn();
+      let unsubscribeSecond;
+      manager.subscribe(() => unsubscribeSecond());
+      unsubscribeSecond = manager.subscribe(second);
+      await loginOk();
+      // Delivery iterates a snapshot, so `second` still receives this round.
+      expect(second).toHaveBeenCalledTimes(1);
+    });
+
+    it('a throwing listener neither breaks login nor starves other listeners, and is reported', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const boom = new Error('listener bug');
+      const good = vi.fn();
+      manager.subscribe(() => {
+        throw boom;
+      });
+      manager.subscribe(good);
+
+      await expect(loginOk()).resolves.toBeUndefined();
+
+      expect(manager.getStatus()).toBe(AUTH_STATUS.AUTHENTICATED);
+      expect(good).toHaveBeenCalledWith(AUTH_STATUS.AUTHENTICATED);
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), boom);
+      consoleError.mockRestore();
     });
   });
 

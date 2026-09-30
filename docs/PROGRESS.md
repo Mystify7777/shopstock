@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -2870,6 +2870,59 @@ sole indicator: consumers must add text/icons.
 exists in `package.json` (not added). One full-suite run showed a single
 unidentified failure that did not reproduce in 9 further full runs
 (5 with these changes, 4 on the untouched baseline).
+
+### Phase 7B (#18) — Application shell, navigation and routes — ✅ COMPLETE (pending review)
+
+Frontend only (backend, domain, repositories, services and sync
+untouched). Contract approved before implementation; decisions:
+logout clears credentials but not local Dexie data; additive
+`authManager.subscribe`; no `PageHeader` yet (no consumer until 7D+);
+small not-found edits to the Detail/Form pages; no mobile bottom bar
+while there is a single nav item; auth gate in scope (Issue #18).
+
+**Route inventory** (`components/AppRoutes.jsx`, router-agnostic so the
+composition is testable under `MemoryRouter`): `/` → redirect
+`/products`; `/products`; `/products/new`; `/products/:id`;
+`/products/:id/edit`; `*` → Not Found (inside the shell).
+
+**Shell** (`components/shell/`): `AppShell` (layout route with
+`<Outlet/>`), `PrimaryNav` (data-driven from `navItems.js`, prefix-match
+active state with `aria-current="page"`, optional `end`), `AccountArea`
+(Sign out), `SessionNotice` (auth-status messaging), empty
+`NotificationRegion` and `SyncStatusSlot` mount points (real content is
+7G). One `<nav>`; the mobile bottom bar is enabled only at 2+ items
+(`MOBILE_BAR_MIN_ITEMS`, `data-mobile-bar`, CSS-hidden below that).
+Only Products exists as a destination — no placeholder links.
+
+**Auth presentation:** `hooks/useAuthSession.js`,
+`components/AuthGate.jsx`, `pages/LoginPage.jsx`. See ARCHITECTURE.md
+"Authentication in the UI (Phase 7B)". Login success calls
+`syncDrainer.drain()` (the seam documented in `main.jsx`).
+
+**Auth layer change (approved, additive):** `authManager.subscribe`;
+the pinned public-API-keys test was updated to include it.
+
+**Other:** `NotFoundState` (shared; message is the only `role="alert"`,
+link outside it) used by `NotFoundPage` and by the Detail/Form
+missing-product branches (text unchanged, plus "Back to Products").
+`styles/shell.css` uses tokens only; `tokens.test.js` now also checks
+`shell.css` for undefined tokens, gradients and removed outlines.
+
+**Tests added (106):** subscribe (18), useAuthSession (16), LoginPage
+(20), PrimaryNav (13), AppRoutes composition (24), AuthGate + shell
+composition (10), page not-found links (2), shell.css token checks (3).
+Mutation-checked (nav `end`, logout guard).
+
+**Validation:** frontend 43 files / 1194 tests pass (baseline 1088);
+`vite build` passes (SW `NavigationRoute` → `index.html`, so deep links
+work offline); `git diff --check` clean; no `lint` script; all touched
+files LF-only.
+
+**Deferred:** Dashboard/classification nav entries (7C); page headers,
+button→link conversion and page bodies (7D–7F); real notifications and
+sync indicators (7G); full responsive/a11y pass incl. skip link (7H).
+Hosting must rewrite unknown paths to `index.html` for deep links
+(deployment concern, not changed here).
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

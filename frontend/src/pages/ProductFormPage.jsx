@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
+import NotFoundState from '../components/NotFoundState.jsx';
 
 /**
  * Minimal product create/edit form -- Phase 2.4 vertical slice.
@@ -102,7 +103,13 @@ export default function ProductFormPage() {
   }
 
   if (notFound) {
-    return <p role="alert">Product not found.</p>;
+    return (
+      <NotFoundState
+        message="Product not found."
+        linkTo="/products"
+        linkLabel="Back to Products"
+      />
+    );
   }
 
   if (loadError) {

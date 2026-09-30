@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
+import NotFoundState from '../components/NotFoundState.jsx';
 import { classifyStockStatus, needsAttention } from '../domain/classification/lowStock.js';
 import { canBeReversed } from '../domain/stock/reversal.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
@@ -309,7 +310,13 @@ export default function ProductDetailPage() {
   }
 
   if (!product) {
-    return <p role="alert">Product not found.</p>;
+    return (
+      <NotFoundState
+        message="Product not found."
+        linkTo="/products"
+        linkLabel="Back to Products"
+      />
+    );
   }
 
   const status = classifyStockStatus({

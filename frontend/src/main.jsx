@@ -18,6 +18,7 @@ import { triggerStartupSync, registerConnectivitySyncTrigger } from './data/sync
 import { AppProvider } from './contexts/AppContext.jsx';
 import './styles/tokens.css';
 import './styles/base.css';
+import './styles/shell.css';
 
 // Composition root: this is the one place application dependencies are
 // constructed and wired together. Everything below this point receives

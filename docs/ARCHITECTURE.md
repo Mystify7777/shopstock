@@ -976,6 +976,33 @@ of a possible provider, not a hard dependency.
   re-login before any further sync, per PRD §35. Local data and offline
   usage remain available throughout, regardless of this token state.
 
+### Authentication in the UI (Phase 7B)
+
+- `authManager` gained one **additive** method, `subscribe(listener)`,
+  which reports real status *transitions* only (a refresh that keeps the
+  session authenticated, or a clear while already unauthenticated, notify
+  nobody). No other auth behavior changed. A throwing listener is logged
+  and isolated; it cannot break auth or other listeners.
+- The UI observes it through `hooks/useAuthSession.js` and renders it in
+  `components/AuthGate.jsx`. The hook contains **no auth mechanics** — it
+  only calls `restoreSession()`, `logout()`, `subscribe()` and
+  `getStatus()`. Login is rendered in place (not a route), so a deep link
+  or refresh keeps its URL through sign-in.
+- Phases: `restoring` (loading) → `authenticated` (app) | `limited` (app +
+  notice; local data usable) | `login`. `AuthNetworkError` during
+  restoration means a persisted session exists but the server is
+  unreachable → `limited/offline` (a trusted device is **not** logged
+  out by being offline). `AuthApiError` → `login/expired`. A backend-
+  rejected refresh *during use* → `limited/session-ended`, with a Sign in
+  action; local data stays available (PRD §35).
+- Logout and session loss clear **credentials only**. Local Dexie data is
+  never cleared or hidden by any auth transition (decision recorded for
+  7B: logout does not lock local data).
+- Known, accepted edge: `main.jsx` starts a restore before React mounts.
+  If that attempt is rejected *and* completes before the gate mounts, the
+  gate's own attempt finds no token and shows plain login without the
+  "session expired" explanation. Safe; only the message is lost.
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by

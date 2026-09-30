@@ -14,6 +14,10 @@
 //   - single-flight refresh coordination: at most one refresh request in
 //     flight at a time, with every concurrent caller sharing its result
 //   - logout (best-effort server call, unconditional local clear)
+//   - status-change notification (subscribe): listeners are told when
+//     the runtime status actually TRANSITIONS, so a UI can react to e.g.
+//     a mid-use refresh rejection. Additive only (Phase 7B): no other
+//     behavior depends on it and nothing here waits on a listener.
 //
 // This file does NOT own:
 //   - any generic HTTP request construction beyond the four auth calls
@@ -79,6 +83,43 @@ export function createAuthManager({ sessionStore, authClient }) {
   // about-to-be-consumed refresh token.
   let inFlightRefresh = null;
 
+  // Status-change listeners (Phase 7B). Called only when `status` actually
+  // changes value -- a token refresh that leaves the session authenticated,
+  // or a clear when already unauthenticated, notifies nobody.
+  const listeners = new Set();
+
+  function notifyStatusChange() {
+    // Snapshot first so a listener that unsubscribes (or subscribes)
+    // during notification cannot affect this round of delivery.
+    for (const listener of [...listeners]) {
+      try {
+        listener(status);
+      } catch (error) {
+        // A misbehaving UI listener must never break authentication or
+        // starve the other listeners. Report it; do not swallow it.
+        console.error('authManager status listener threw:', error);
+      }
+    }
+  }
+
+  /**
+   * Subscribe to runtime auth status transitions.
+   *
+   * @param {(status: string) => void} listener called with the NEW status
+   *   (an AUTH_STATUS value) after each real transition.
+   * @returns {() => void} unsubscribe function (idempotent).
+   * @throws {TypeError} if listener is not a function.
+   */
+  function subscribe(listener) {
+    if (typeof listener !== 'function') {
+      throw new TypeError('authManager.subscribe requires a function listener.');
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
   function getStatus() {
     return status;
   }
@@ -97,8 +138,12 @@ export function createAuthManager({ sessionStore, authClient }) {
    */
   async function installCredentials({ accessToken: newAccessToken, refreshToken: newRefreshToken }) {
     await sessionStore.setRefreshToken(newRefreshToken);
+    const previousStatus = status;
     accessToken = newAccessToken;
     status = AUTH_STATUS.AUTHENTICATED;
+    if (previousStatus !== status) {
+      notifyStatusChange();
+    }
   }
 
   /**
@@ -107,8 +152,14 @@ export function createAuthManager({ sessionStore, authClient }) {
    * failure path that must not leave a stale/invalid session installed.
    */
   async function clearLocalSession() {
+    const previousStatus = status;
     accessToken = null;
     status = AUTH_STATUS.UNAUTHENTICATED;
+    // The in-memory status is the truth listeners care about; notify as
+    // soon as it flips, before the (awaited) persisted-token clear.
+    if (previousStatus !== status) {
+      notifyStatusChange();
+    }
     await sessionStore.clearRefreshToken();
   }
 
@@ -284,5 +335,6 @@ export function createAuthManager({ sessionStore, authClient }) {
     restoreSession,
     refresh,
     logout,
+    subscribe,
   };
 }

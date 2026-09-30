@@ -168,6 +168,18 @@ describe('ProductFormPage', () => {
     expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
   });
 
+  it('offers a working way back to Products from the not-found state', async () => {
+    const productService = makeMockService({
+      getProduct: vi.fn().mockResolvedValue(undefined),
+    });
+    renderEdit(productService, 'missing-id');
+
+    // the alert keeps exactly the original message
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Product not found\.$/);
+    fireEvent.click(screen.getByRole('link', { name: 'Back to Products' }));
+    expect(screen.getByText('Product list')).toBeInTheDocument();
+  });
+
   it('shows an error state when loading the product rejects', async () => {
     const productService = makeMockService({
       getProduct: vi.fn().mockRejectedValue(new Error('network unavailable')),
