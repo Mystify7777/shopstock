@@ -26,6 +26,8 @@ import bcrypt from 'bcryptjs';
 import { loadConfig } from '../config/env.js';
 import { connectDb, disconnectDb } from '../config/db.js';
 import { User } from '../models/User.js';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 const BCRYPT_SALT_ROUNDS = 10;
 
@@ -79,7 +81,7 @@ async function runCli() {
 
 // Only run the CLI entrypoint when this file is executed directly (e.g.
 // `npm run seed`), not when seedUser() is imported for testing.
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runCli();
+if (fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  await runCli();
 }
 
