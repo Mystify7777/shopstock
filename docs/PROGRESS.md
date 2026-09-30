@@ -2822,7 +2822,55 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — Dashboard + classification management UI — NOT STARTED
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A complete)
+
+> Naming note: this heading previously read "Dashboard + classification
+> management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
+> current scope; dashboard/classification screens fall under it.
+
+### Phase 7A (#17) — Design tokens and UI foundation — ✅ COMPLETE
+
+Frontend-only. No page, routing, domain, data, sync or backend changes.
+
+**Starting state (inspected):** no CSS existed anywhere in the frontend;
+pages are unstyled semantic HTML (no classNames, inline styles or
+hard-coded colors).
+
+**Added**
+- `frontend/src/styles/tokens.css` — single source of truth, CSS custom
+  properties on `:root`, light theme only, no gradients, system fonts (no
+  network font, offline-first). Covers: surfaces, text, borders, primary
+  accent (`#2563eb`) + hover/active, selected, disabled, focus + focus-ring,
+  success/warning/danger/info (solid/bg/fg/border), stock-normal/low/out
+  (aliases of success/warning/danger), offline/syncing/failed, overlay,
+  typography, 4px-based spacing scale (7 steps), radii, shadows, layout
+  widths + mobile/desktop gutters, control heights (44px default), motion
+  durations/easing (collapsed under `prefers-reduced-motion`), z-index
+  layers, focus ring.
+- `frontend/src/styles/base.css` — minimal global layer consuming tokens:
+  box-sizing, body defaults, h1/h2, link color, control font inheritance,
+  control height/border/radius, hover/active/selected (`aria-pressed`)/
+  invalid/disabled states, global `:focus-visible` ring.
+- Both imported once from `main.jsx`.
+- `frontend/src/styles/tokens.test.js` — 116 tests: required token
+  coverage, alias resolution, z-index ordering, reduced-motion collapse,
+  no gradients, WCAG AA contrast for every defined semantic text/background pairing
+  (4.5:1) and control/focus boundaries (3:1), `base.css` references only
+  defined tokens and never removes outlines. Mutation-checked: weakening
+  `--color-text-muted` makes the contrast tests fail.
+
+**Deliberate non-goals:** no JSX primitives (`components/` is empty and
+Issue #17 forbids a component library); no dark mode or `prefers-color-
+scheme`; `index.html`/manifest `#0f172a` theme color left as-is; no
+page-level styling (7B onward). Status colors are never intended as the
+sole indicator: consumers must add text/icons.
+
+**Validation:** frontend 38 files / 1088 tests pass (baseline 37 / 972 +
+116 new); `vite build` passes; `git diff --check` clean; no `lint` script
+exists in `package.json` (not added). One full-suite run showed a single
+unidentified failure that did not reproduce in 9 further full runs
+(5 with these changes, 4 on the untouched baseline).
+
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 
 ---

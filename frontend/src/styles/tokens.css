@@ -1,0 +1,252 @@
+/*
+ * ShopStock design tokens (Phase 7A / Issue #17)
+ *
+ * Single source of truth for the visual system. Later Phase 7 work
+ * consumes these variables; it does not invent colors, spacing, radii,
+ * type sizes or control heights locally.
+ *
+ * Rules:
+ *  - Semantic names only (what a value is FOR, not what it looks like).
+ *  - Light theme only. All values live on :root so a future theme can
+ *    override the same variable names. No theme switcher exists.
+ *  - No gradients. Elevation is a small shadow scale.
+ *  - Every defined semantic text/background pairing below is verified by
+ *    tokens.test.js (WCAG AA: 4.5:1 text, 3:1 UI boundaries/focus).
+ *    If you change a color, that test tells you if a pairing broke.
+ *  - Status is never conveyed by color alone: pair these colors with
+ *    a text label or icon in the UI that uses them.
+ *
+ * Breakpoint note: custom properties cannot be used inside @media
+ * conditions, so the single desktop breakpoint is 48rem (768px) and is
+ * written literally where needed. Gutters below switch at that point.
+ */
+
+:root {
+  /* ------------------------------------------------------------------
+   * Surfaces
+   * ---------------------------------------------------------------- */
+  --color-page: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #ffffff; /* separated from the page by --shadow-*, not by tint */
+  --color-surface-muted: #f1f5f9;
+  --color-surface-hover: #f1f5f9;
+  --color-surface-active: #e2e8f0;
+
+  /* ------------------------------------------------------------------
+   * Text
+   * ---------------------------------------------------------------- */
+  --color-text: #0f172a;
+  --color-text-secondary: #334155;
+  --color-text-muted: #526176;
+  --color-text-inverse: #ffffff;
+
+  /* ------------------------------------------------------------------
+   * Borders
+   *  - border-subtle / border: dividers and card edges (decorative)
+   *  - border-strong: boundaries of interactive controls (>= 3:1)
+   * ---------------------------------------------------------------- */
+  --color-border-subtle: #e2e8f0;
+  --color-border: #cbd5e1;
+  --color-border-strong: #64748b;
+
+  /* ------------------------------------------------------------------
+   * Primary action (the one brand accent) and its interaction states
+   * ---------------------------------------------------------------- */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-active: #1e40af;
+  --color-on-primary: var(--color-text-inverse);
+
+  /* Selected: toggles, active filters, current item. */
+  --color-selected-bg: #eff6ff;
+  --color-selected-fg: #1e40af;
+  --color-selected-border: var(--color-primary);
+
+  /* Disabled: must remain visibly different from enabled. Exempt from
+     contrast minimums by WCAG, but kept readable. */
+  --color-disabled-bg: #e2e8f0;
+  --color-disabled-fg: #64748b;
+  --color-disabled-border: #cbd5e1;
+
+  /* ------------------------------------------------------------------
+   * Focus
+   * ---------------------------------------------------------------- */
+  --color-focus: #2563eb;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring: var(--focus-ring-width) solid var(--color-focus);
+
+  /* ------------------------------------------------------------------
+   * Semantic states. For each state:
+   *   --color-<s>          solid: icons, borders, text on surfaces,
+   *                        and as a background under --color-text-inverse
+   *   --color-<s>-bg       tinted background for banners / badges
+   *   --color-<s>-fg       text on the tinted background
+   *   --color-<s>-border   edge of the tinted background
+   * ---------------------------------------------------------------- */
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-success-fg: #14532d;
+  --color-success-border: #86efac;
+
+  --color-warning: #b45309;
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #78350f;
+  --color-warning-border: #fcd34d;
+
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #7f1d1d;
+  --color-danger-border: #fca5a5;
+
+  --color-info: #0369a1;
+  --color-info-bg: #f0f9ff;
+  --color-info-fg: #0c4a6e;
+  --color-info-border: #7dd3fc;
+
+  /* ------------------------------------------------------------------
+   * Stock status (same four-part shape; aliases of the states above so
+   * "low stock" and "warning" cannot drift apart)
+   * ---------------------------------------------------------------- */
+  --color-stock-normal: var(--color-success);
+  --color-stock-normal-bg: var(--color-success-bg);
+  --color-stock-normal-fg: var(--color-success-fg);
+  --color-stock-normal-border: var(--color-success-border);
+
+  --color-stock-low: var(--color-warning);
+  --color-stock-low-bg: var(--color-warning-bg);
+  --color-stock-low-fg: var(--color-warning-fg);
+  --color-stock-low-border: var(--color-warning-border);
+
+  --color-stock-out: var(--color-danger);
+  --color-stock-out-bg: var(--color-danger-bg);
+  --color-stock-out-fg: var(--color-danger-fg);
+  --color-stock-out-border: var(--color-danger-border);
+
+  /* ------------------------------------------------------------------
+   * Sync / connectivity status. Offline is neutral (a normal condition
+   * for an offline-first app, not an error); failed reuses danger.
+   * ---------------------------------------------------------------- */
+  --color-offline: #475569;
+  --color-offline-bg: #f1f5f9;
+  --color-offline-fg: #1e293b;
+  --color-offline-border: #94a3b8;
+
+  --color-syncing: var(--color-info);
+  --color-syncing-bg: var(--color-info-bg);
+  --color-syncing-fg: var(--color-info-fg);
+  --color-syncing-border: var(--color-info-border);
+
+  --color-failed: var(--color-danger);
+  --color-failed-bg: var(--color-danger-bg);
+  --color-failed-fg: var(--color-danger-fg);
+  --color-failed-border: var(--color-danger-border);
+
+  /* Scrim behind dialogs. Not a text background; not contrast-checked. */
+  --color-overlay: rgb(15 23 42 / 0.5);
+
+  /* ------------------------------------------------------------------
+   * Typography. System fonts only: no network font dependency, which
+   * matters for an offline-first PWA.
+   * ---------------------------------------------------------------- */
+  --font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-numeric: tabular-nums; /* for font-variant-numeric on quantities and prices */
+
+  --font-size-heading-page: 1.5rem;
+  --font-size-heading-section: 1.125rem;
+  --font-size-body: 1rem; /* 16px: also stops iOS zooming into inputs */
+  --font-size-label: 0.875rem;
+  --font-size-helper: 0.8125rem;
+  --font-size-error: 0.875rem;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-heading: 1.25;
+  --line-height-body: 1.5;
+  --line-height-compact: 1.35; /* labels, helper and error text */
+
+  /* ------------------------------------------------------------------
+   * Spacing (4px base, small scale)
+   *   1 inline gap · 2 control padding · 3 tight stack · 4 component
+   *   padding · 5 card/panel padding · 6 section gap · 7 page gap
+   * ---------------------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* ------------------------------------------------------------------
+   * Radii. --radius-full is for pills/badges/avatars only.
+   * ---------------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --radius-full: 9999px;
+
+  /* ------------------------------------------------------------------
+   * Elevation
+   * ---------------------------------------------------------------- */
+  --shadow-1: 0 1px 2px rgb(15 23 42 / 0.08);
+  --shadow-2: 0 2px 8px rgb(15 23 42 / 0.12);
+  --shadow-3: 0 8px 24px rgb(15 23 42 / 0.16);
+
+  /* ------------------------------------------------------------------
+   * Layout: content widths and page gutters (mobile-first; the gutter
+   * widens at the 48rem breakpoint below)
+   * ---------------------------------------------------------------- */
+  --layout-width-narrow: 40rem; /* forms, single-column reading */
+  --layout-width-content: 64rem; /* lists, detail pages */
+  --layout-width-wide: 80rem;
+
+  --gutter-mobile: 1rem;
+  --gutter-desktop: 2rem;
+  --gutter: var(--gutter-mobile);
+
+  /* ------------------------------------------------------------------
+   * Control heights. Default is a 44px touch target.
+   * ---------------------------------------------------------------- */
+  --control-height-sm: 2.25rem;
+  --control-height: 2.75rem;
+  --control-height-lg: 3rem;
+  --touch-target-min: 2.75rem;
+
+  /* ------------------------------------------------------------------
+   * Motion: short, functional, no decoration
+   * ---------------------------------------------------------------- */
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+  --duration-slow: 250ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ------------------------------------------------------------------
+   * Stacking layers (lowest to highest)
+   * ---------------------------------------------------------------- */
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-overlay: 300;
+  --z-dialog: 400;
+  --z-toast: 500;
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --gutter: var(--gutter-desktop);
+  }
+}
+
+/* Reduced motion: every duration collapses, so anything built on the
+   motion tokens is automatically safe. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+    --duration-slow: 0.01ms;
+  }
+}

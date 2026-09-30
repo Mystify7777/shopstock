@@ -16,6 +16,8 @@ import { createSyncEntryExecutor } from './data/sync/syncEntryExecutor.js';
 import { createSyncDrainer } from './data/sync/syncDrainer.js';
 import { triggerStartupSync, registerConnectivitySyncTrigger } from './data/sync/syncTriggers.js';
 import { AppProvider } from './contexts/AppContext.jsx';
+import './styles/tokens.css';
+import './styles/base.css';
 
 // Composition root: this is the one place application dependencies are
 // constructed and wired together. Everything below this point receives
