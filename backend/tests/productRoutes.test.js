@@ -396,7 +396,7 @@ describe('products resource', () => {
       const res = await request(testApp())
         .put('/api/products/prod-1')
         .set(authHeader(OWNER_A))
-        .send({ name: 'Whole Milk', sellingPrice: 65 });
+        .send({ name: 'Whole Milk', sellingPrice: 65, fieldMutations: { name: { timestamp: '2026-09-14T10:01:00.000Z', eventId: 'evt-name' }, sellingPrice: { timestamp: '2026-09-14T10:02:00.000Z', eventId: 'evt-sellingPrice' } } });
 
       assert.equal(res.status, 200);
       assert.equal(res.body.name, 'Whole Milk');
@@ -412,7 +412,7 @@ describe('products resource', () => {
       const res = await request(testApp())
         .put('/api/products/prod-1')
         .set(authHeader(OWNER_A))
-        .send({ sellingPrice: 65 });
+        .send({ sellingPrice: 65, fieldMutations: { sellingPrice: { timestamp: '2026-09-14T10:01:00.000Z', eventId: 'evt-sellingPrice' } } });
 
       assert.equal(res.status, 200);
       assert.equal(res.body.name, 'Milk');
@@ -438,7 +438,7 @@ describe('products resource', () => {
       const res = await request(testApp())
         .put('/api/products/prod-1')
         .set(authHeader(OWNER_A))
-        .send({ name: null });
+        .send({ name: null, fieldMutations: { name: { timestamp: '2026-09-14T10:01:00.000Z', eventId: 'evt-name' } } });
 
       assert.equal(res.status, 400);
       assert.equal(res.body.error.code, 'VALIDATION_ERROR');
@@ -616,7 +616,7 @@ describe('products resource', () => {
       const res = await request(testApp())
         .put('/api/products/prod-1')
         .set(authHeader(OWNER_A))
-        .send({ name: 'Milk', archived: true });
+        .send({ name: 'Milk', archived: true, fieldMutations: { archived: { timestamp: '2026-09-14T10:01:00.000Z', eventId: 'evt-archived' } } });
 
       assert.equal(res.status, 200);
       assert.equal(res.body.archived, true);
@@ -1108,6 +1108,127 @@ describe('products resource', () => {
         .send({ categoryId: null, fieldMutations: { category: { timestamp: '2026-09-14T10:07:00.000Z', eventId: 'evt-null' } } });
       assert.equal(res.status, 200);
       assert.equal(res.body.categoryId, null);
+    });
+
+    // ---- Phase 6G locked rule: tracked-field authority on an EXISTING Product ----
+    describe('tracked-field authority: fieldMutations is the only client authority on an existing Product', () => {
+      const put = (payload) =>
+        request(testApp()).put('/api/products/prod-lww').set(authHeader(OWNER_A)).send(payload);
+      const raw = () => Product.collection.findOne({ _id: 'prod-lww' });
+
+      test('genuine INSERT: tracked fields in the snapshot are initialized without any fieldMutations', async () => {
+        const res = await put({ name: 'Fresh', categoryId: 'c1', locationIds: ['l1'], tagIds: ['t1'], sellingPrice: 40, archived: false });
+        assert.equal(res.status, 200);
+        const doc = await raw();
+        assert.equal(doc.name, 'Fresh');
+        assert.equal(doc.categoryId, 'c1');
+        assert.deepEqual(doc.locationIds, ['l1']);
+        assert.deepEqual(doc.tagIds, ['t1']);
+        assert.equal(doc.sellingPrice, 40);
+        assert.deepEqual(doc.fieldTimestamps, {}); // no mutation -> no LWW state invented
+        assert.equal(Object.hasOwn(doc, '__lwwIsInsert'), false); // temp marker never persisted
+      });
+
+      test('existing Product, tracked fields present WITHOUT mutations: server values preserved, fieldTimestamps untouched', async () => {
+        await seedProductWithFieldTimestamps(); // name 'Original Name', sellingPrice 100, empty fieldTimestamps
+        const before = await raw();
+        const res = await put({ name: 'HACKED', categoryId: 'x', locationIds: ['x'], tagIds: ['x'], sellingPrice: 1, archived: true });
+        assert.equal(res.status, 200);
+        const after = await raw();
+        for (const f of ['name', 'categoryId', 'locationIds', 'tagIds', 'sellingPrice', 'archived']) {
+          assert.deepEqual(after[f], before[f], `${f} must be preserved`);
+        }
+        assert.deepEqual(after.fieldTimestamps, before.fieldTimestamps);
+      });
+
+      test('existing Product, tracked field omitted: server value preserved', async () => {
+        await seedProductWithFieldTimestamps();
+        const before = await raw();
+        await put({ notes: 'only a note' });
+        assert.equal((await raw()).sellingPrice, before.sellingPrice);
+      });
+
+      test('existing Product, valid NEWER mutation: applied through LWW and fieldTimestamps updated', async () => {
+        await seedProductWithFieldTimestamps();
+        const res = await put({ sellingPrice: 300, fieldMutations: { sellingPrice: { timestamp: '2099-01-01T00:00:00.000Z', eventId: 'evt-new' } } });
+        assert.equal(res.status, 200);
+        const doc = await raw();
+        assert.equal(doc.sellingPrice, 300);
+        assert.equal(doc.fieldTimestamps.sellingPrice.eventId, 'evt-new');
+      });
+
+      test('existing Product, STALE mutation: newer server value and timestamp survive', async () => {
+        await seedProductWithFieldTimestamps();
+        await put({ sellingPrice: 300, fieldMutations: { sellingPrice: { timestamp: '2099-01-01T00:00:00.000Z', eventId: 'evt-new' } } });
+        await put({ sellingPrice: 5, fieldMutations: { sellingPrice: { timestamp: '2026-01-01T00:00:00.000Z', eventId: 'evt-stale' } } });
+        const doc = await raw();
+        assert.equal(doc.sellingPrice, 300);
+        assert.equal(doc.fieldTimestamps.sellingPrice.eventId, 'evt-new');
+      });
+
+      test('existing Product, explicit null WITH a valid mutation: null is applied', async () => {
+        await seedProductWithFieldTimestamps();
+        await put({ sellingPrice: null, fieldMutations: { sellingPrice: { timestamp: '2099-01-01T00:00:00.000Z', eventId: 'evt-null' } } });
+        assert.equal((await raw()).sellingPrice, null);
+      });
+
+      test('existing Product, explicit null WITHOUT a mutation: preserved (null has no special authority)', async () => {
+        await seedProductWithFieldTimestamps();
+        const before = await raw();
+        await put({ sellingPrice: null });
+        assert.equal((await raw()).sellingPrice, before.sellingPrice);
+      });
+
+      test('name: null without a mutation on an existing Product is a preserved no-op (200), not an identity violation', async () => {
+        await seedProductWithFieldTimestamps();
+        const before = await raw();
+        const res = await put({ name: null });
+        assert.equal(res.status, 200);
+        assert.equal((await raw()).name, before.name);
+      });
+
+      test('untracked fields still update on an existing Product without any fieldMutations', async () => {
+        await seedProductWithFieldTimestamps();
+        const res = await put({
+          photoRef: 'ph-1', unitId: 'u-1', lowStockThreshold: 7, lowStockDisabled: true,
+          marginOverride: 15, latestPurchaseDate: '2026-09-01', notes: 'n'
+        });
+        assert.equal(res.status, 200);
+        const doc = await raw();
+        assert.equal(doc.photoRef, 'ph-1');
+        assert.equal(doc.unitId, 'u-1');
+        assert.equal(doc.lowStockThreshold, 7);
+        assert.equal(doc.lowStockDisabled, true);
+        assert.equal(doc.marginOverride, 15);
+        assert.equal(doc.latestPurchaseDate, '2026-09-01');
+        assert.equal(doc.notes, 'n');
+      });
+
+      test('MIXED update: mutated tracked field -> LWW; unmutated tracked field -> preserved; untracked field -> normal update', async () => {
+        await seedProductWithFieldTimestamps(); // name 'Original Name', sellingPrice 100
+        const before = await raw();
+        const res = await put({
+          sellingPrice: 250,          // tracked + mutation
+          name: 'Unauthorized Rename', // tracked, NO mutation
+          notes: 'plain update',       // untracked
+          fieldMutations: { sellingPrice: { timestamp: '2099-01-01T00:00:00.000Z', eventId: 'evt-mixed' } }
+        });
+        assert.equal(res.status, 200);
+        const doc = await raw();
+        assert.equal(doc.sellingPrice, 250);
+        assert.equal(doc.fieldTimestamps.sellingPrice.eventId, 'evt-mixed');
+        assert.equal(doc.name, before.name);
+        assert.equal(doc.notes, 'plain update');
+      });
+
+      test('a mutation whose tracked value is omitted is still rejected (VALIDATION_ERROR) and modifies nothing', async () => {
+        await seedProductWithFieldTimestamps();
+        const before = await raw();
+        const res = await put({ notes: 'x', fieldMutations: { sellingPrice: { timestamp: '2099-01-01T00:00:00.000Z', eventId: 'e' } } });
+        assert.equal(res.status, 400);
+        assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+        assert.deepEqual(await raw(), before);
+      });
     });
   });
 });

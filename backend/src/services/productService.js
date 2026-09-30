@@ -236,7 +236,13 @@ function assertValidPayload(payload, existingProduct) {
   assertNoFieldTimestampsInPayload(payload);
   assertValidFieldMutations(payload.fieldMutations, payload);
 
-  const effectiveName = Object.hasOwn(payload, 'name')
+  // On an EXISTING product a tracked field only takes effect when its
+  // fieldMutations entry is present (Phase 6G locked rule); without one
+  // the stored value survives, so identity must be judged against it.
+  // `name` is the only tracked field that participates in the identity rule.
+  const nameIsAuthoritative =
+    Object.hasOwn(payload, 'name') && (!existingProduct || Boolean(payload.fieldMutations?.name));
+  const effectiveName = nameIsAuthoritative
     ? payload.name
     : existingProduct?.name ?? null;
   const effectivePhotoRef = Object.hasOwn(payload, 'photoRef')
@@ -333,10 +339,10 @@ function buildNonLwwPatch(payload) {
  *     lets it win)
  *
  * A tracked field NOT present in fieldMutations keeps its
- * fieldTimestamps entry unchanged. Its Product value is carried through
- * from the current document if the payload omits it, or applied
- * unconditionally if the payload includes it (create path / clients that
- * send no fieldMutations) -- no LWW comparison happens without a mutation.
+ * fieldTimestamps entry unchanged. Its Product value is ALWAYS carried
+ * through from the live document on an existing Product (a tracked field
+ * has no client authority without its fieldMutations entry -- Phase 6G),
+ * and only initialized from the payload on a genuine insert.
  *
  * `fieldTimestamps` is rebuilt as ONE plain object per write (six known,
  * fixed keys -- this project doesn't need a dynamic $setField chain,
@@ -353,6 +359,8 @@ function buildNonLwwPatch(payload) {
  * @returns {object} One aggregation-pipeline stage, for use as an
  *   element of the `update` array argument to findOneAndUpdate().
  */
+const INSERT_MARKER = '__lwwIsInsert';
+
 function buildLwwPipelineStage(fieldMutations = {}, payload = {}) {
   const productFieldUpdates = {};
   const fieldTimestampEntries = {};
@@ -371,13 +379,14 @@ function buildLwwPipelineStage(fieldMutations = {}, payload = {}) {
     const storedTimestampExpr = { $getField: { field: 'timestamp', input: storedEntryExpr } };
 
     if (!mutation) {
-      // No LWW mutation for this field. If the payload nonetheless
-      // carries the field (the create path, or a client that sends no
-      // fieldMutations), it is applied unconditionally, exactly as
-      // before Phase 6E, and its fieldTimestamps entry is left alone.
-      // If the payload omits it, the current document value survives.
+      // Phase 6G locked rule: on an EXISTING document, a tracked field
+      // has no client authority without its fieldMutations entry -- the
+      // live value survives whether or not the payload carries the field
+      // (a stale full-snapshot upsert must never revert a newer LWW
+      // value). On a genuine INSERT there is nothing to protect, so the
+      // snapshot value initializes the field. fieldTimestamps is untouched.
       productFieldUpdates[productField] = Object.hasOwn(payload, productField)
-        ? { $literal: payload[productField] }
+        ? { $cond: { if: `$${INSERT_MARKER}`, then: { $literal: payload[productField] }, else: `$${productField}` } }
         : `$${productField}`;
       fieldTimestampEntries[eventField] = storedEntryExpr;
       continue;
@@ -453,7 +462,11 @@ function buildBaseAndPatchStage(ownerId, urlId, nonLwwPatch, now) {
     notes: { $ifNull: ['$notes', null] },
     archived: { $ifNull: ['$archived', false] },
     createdAt: { $ifNull: ['$createdAt', now] },
-    fieldTimestamps: { $ifNull: ['$fieldTimestamps', {}] }
+    fieldTimestamps: { $ifNull: ['$fieldTimestamps', {}] },
+    // Temporary marker, evaluated against the INPUT document (before any
+    // default above is applied): a genuine insert has no createdAt yet.
+    // Removed by the final pipeline stage; never persisted.
+    [INSERT_MARKER]: { $eq: [{ $type: '$createdAt' }, 'missing'] }
   };
   for (const [field, value] of Object.entries(nonLwwPatch)) {
     set[field] = { $literal: value };
@@ -518,7 +531,8 @@ export function createProductService(ProductModel) {
           // document's quantity forward (or 0 on insert), so a
           // concurrent stock event can never be rolled back by this
           // write. updatedAt is server receipt time, never the LWW clock.
-          { $set: { _id: urlId, ownerId, updatedAt: now } }
+          { $set: { _id: urlId, ownerId, updatedAt: now } },
+          { $unset: INSERT_MARKER }
         ],
         { upsert: true, new: true, runValidators: true }
       ).lean();
