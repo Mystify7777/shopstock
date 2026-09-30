@@ -19,7 +19,12 @@ async function start() {
     process.exit(1);
   }
 
-  const app = createApp({ corsOrigin: config.corsOrigin });
+  const app = createApp({
+    corsOrigin: config.corsOrigin,
+    jwtAccessSecret: config.jwtAccessSecret,
+    jwtAccessExpiresIn: config.jwtAccessExpiresIn,
+    refreshTokenExpiresInDays: config.refreshTokenExpiresInDays
+  });
 
   app.listen(config.port, () => {
     console.log(`[ShopStock backend] Listening on port ${config.port} (${config.nodeEnv}).`);
