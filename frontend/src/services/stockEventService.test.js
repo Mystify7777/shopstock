@@ -153,6 +153,61 @@ describe('stockEventService', () => {
   // wouldOverRemove
   // =========================================================================
 
+  describe('getRecentActivity (Phase 7C)', () => {
+    it('returns an empty array when nothing has happened', async () => {
+      expect(await stockEventService.getRecentActivity(10)).toEqual([]);
+    });
+
+    it('returns stock events across products, including appliedQuantity', async () => {
+      const a = await makeProduct({ name: 'A' });
+      const b = await makeProduct({ name: 'B' });
+      await stockEventService.addStock({ productId: a.id, quantity: 5 });
+      await stockEventService.addStock({ productId: b.id, quantity: 9 });
+
+      const rows = await stockEventService.getRecentActivity(10);
+      expect(rows).toHaveLength(2);
+      expect(new Set(rows.map((r) => r.productId))).toEqual(new Set([a.id, b.id]));
+      for (const row of rows) {
+        expect(row.type).toBe('ADD');
+        expect(typeof row.appliedQuantity).toBe('number');
+      }
+    });
+
+    it('honors the limit', async () => {
+      const p = await makeProduct();
+      for (let i = 0; i < 4; i++) {
+        await stockEventService.addStock({ productId: p.id, quantity: 1 });
+      }
+      expect(await stockEventService.getRecentActivity(3)).toHaveLength(3);
+    });
+
+    it('shows a clamped over-removal by what actually applied', async () => {
+      const p = await makeProduct();
+      await stockEventService.addStock({ productId: p.id, quantity: 5 });
+      await stockEventService.removeStock({ productId: p.id, quantity: 8 });
+
+      const removal = (await stockEventService.getRecentActivity(10)).find((r) => r.type === 'REMOVE');
+      expect(removal.quantity).toBe(8);
+      expect(removal.appliedQuantity).toBe(5);
+    });
+
+    it('includes a reversal as its own row linked to the original', async () => {
+      const p = await makeProduct();
+      const { event } = await stockEventService.addStock({ productId: p.id, quantity: 4 });
+      await stockEventService.reverseEvent(event.id);
+
+      const rows = await stockEventService.getRecentActivity(10);
+      expect(rows).toHaveLength(2);
+      const reversal = rows.find((r) => r.reversalOf === event.id);
+      expect(reversal).toBeDefined();
+      expect(reversal.type).toBe('REMOVE');
+    });
+
+    it('rejects an invalid limit', async () => {
+      await expect(stockEventService.getRecentActivity(0)).rejects.toThrow(RangeError);
+    });
+  });
+
   describe('wouldOverRemove', () => {
     it('returns false when sufficient stock is available', async () => {
       const product = await makeProduct();

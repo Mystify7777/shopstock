@@ -1,0 +1,97 @@
+/*
+ * Classification management (Phase 7C). Tokens only.
+ */
+
+.classifications__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.classifications__tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.classifications__tabs a:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* Current type: tint + weight + underline bar, not color alone. */
+.classifications__tabs a[aria-current='page'] {
+  background: var(--color-selected-bg);
+  color: var(--color-selected-fg);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: inset 0 calc(var(--focus-ring-width) * -1) 0 var(--color-selected-border);
+}
+
+.classifications form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.classifications form > label {
+  flex-basis: 100%;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.classifications form > p[role='alert'] {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-danger-fg);
+  font-size: var(--font-size-error);
+}
+
+.classifications li {
+  margin-bottom: var(--space-3);
+}
+
+.classifications li > button {
+  margin-inline-start: var(--space-1);
+}
+
+/* The inline confirmation (same role="alertdialog" pattern as the stock
+   over-removal warning), styled as a panel when inside this screen. */
+.classifications [role='alertdialog'] {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-2);
+}
+
+.classifications [role='alertdialog'] h3 {
+  margin-top: 0;
+}
+
+.classifications [role='alertdialog'] [role='alert'] {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+}
+
+.classifications [role='alertdialog'] [role='alert'] p {
+  margin: 0 0 var(--space-2);
+}
+
+.classifications [role='alertdialog'] > button + button {
+  margin-inline-start: var(--space-2);
+}

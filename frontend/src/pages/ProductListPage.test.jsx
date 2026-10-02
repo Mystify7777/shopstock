@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import ProductListPage from './ProductListPage.jsx';
 import { AppProvider } from '../contexts/AppContext.jsx';
 
@@ -804,6 +804,146 @@ describe('ProductListPage', () => {
         });
         expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('URL-seeded state (Phase 7C dashboard compatibility)', () => {
+    const lowProduct = {
+      id: 'low-1',
+      name: 'Low Item',
+      quantity: 2,
+      lowStockThreshold: null,
+      lowStockDisabled: false,
+      archived: false
+    };
+
+    function renderAt(url, productService, extra = null) {
+      return render(
+        <AppProvider
+          services={{ productService, classificationRepository: makeMockClassificationRepository() }}
+        >
+          <MemoryRouter initialEntries={[url]}>
+            {extra}
+            <Routes>
+              <Route path="/products" element={<ProductListPage />} />
+              <Route path="/products/:id" element={<div>Product detail</div>} />
+            </Routes>
+          </MemoryRouter>
+        </AppProvider>
+      );
+    }
+
+    function serviceReturning(matches = []) {
+      return makeMockService({
+        searchProducts: vi.fn().mockResolvedValue({ matches, related: [], hasExactMatch: false })
+      });
+    }
+
+    it('?q= pre-fills the search box and runs that search with the unchanged filter shape', async () => {
+      const productService = serviceReturning([{ ...lowProduct, name: 'Parle-G' }]);
+      renderAt('/products?q=parle', productService);
+
+      expect(await screen.findByLabelText('Search')).toHaveValue('parle');
+      await waitFor(() => {
+        expect(productService.searchProducts).toHaveBeenCalledWith('parle', {
+          categoryId: null,
+          locationIds: [],
+          tagIds: []
+        });
+      });
+      expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+    });
+
+    it.each([
+      ['low', 'Showing low stock products only.'],
+      ['out', 'Showing out-of-stock products only.']
+    ])('?stockStatus=%s applies the filter and says so in words', async (status, message) => {
+      const productService = serviceReturning([lowProduct]);
+      renderAt(`/products?stockStatus=${status}`, productService);
+
+      await waitFor(() => {
+        expect(productService.searchProducts).toHaveBeenCalledWith('', {
+          categoryId: null,
+          locationIds: [],
+          tagIds: [],
+          stockStatus: status
+        });
+      });
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(await screen.findByText(/Low Item/)).toBeInTheDocument();
+    });
+
+    it('combines ?q= and ?stockStatus=', async () => {
+      const productService = serviceReturning([]);
+      renderAt('/products?q=parle&stockStatus=out', productService);
+      await waitFor(() => {
+        expect(productService.searchProducts).toHaveBeenCalledWith('parle', {
+          categoryId: null,
+          locationIds: [],
+          tagIds: [],
+          stockStatus: 'out'
+        });
+      });
+    });
+
+    it('ignores an unrecognised stockStatus: normal list, no filter, no indicator', async () => {
+      const productService = makeMockService({ listProducts: vi.fn().mockResolvedValue([lowProduct]) });
+      renderAt('/products?stockStatus=bogus', productService);
+
+      expect(await screen.findByText(/Low Item/)).toBeInTheDocument();
+      expect(productService.searchProducts).not.toHaveBeenCalled();
+      expect(screen.queryByText(/showing .* only/i)).not.toBeInTheDocument();
+    });
+
+    it('treats an empty ?q= as no search', async () => {
+      const productService = makeMockService({ listProducts: vi.fn().mockResolvedValue([lowProduct]) });
+      renderAt('/products?q=', productService);
+      expect(await screen.findByText(/Low Item/)).toBeInTheDocument();
+      expect(productService.searchProducts).not.toHaveBeenCalled();
+    });
+
+    it('"Clear filters" removes a URL-seeded stock-status filter and returns to the full list', async () => {
+      const productService = makeMockService({
+        listProducts: vi.fn().mockResolvedValue([lowProduct, { ...lowProduct, id: 'ok', name: 'Fine Item', quantity: 99 }]),
+        searchProducts: vi.fn().mockResolvedValue({ matches: [lowProduct], related: [], hasExactMatch: false })
+      });
+      renderAt('/products?stockStatus=low', productService);
+      await screen.findByText('Showing low stock products only.');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/showing .* only/i)).not.toBeInTheDocument();
+      });
+      expect(await screen.findByText(/Fine Item/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+    });
+
+    it('re-seeds from the URL when it changes while the page stays mounted', async () => {
+      const productService = serviceReturning([]);
+      renderAt('/products?stockStatus=low', productService, (
+        <Link to="/products?stockStatus=out">go-out</Link>
+      ));
+      await screen.findByText('Showing low stock products only.');
+
+      fireEvent.click(screen.getByText('go-out'));
+
+      expect(await screen.findByText('Showing out-of-stock products only.')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(productService.searchProducts).toHaveBeenLastCalledWith('', {
+          categoryId: null,
+          locationIds: [],
+          tagIds: [],
+          stockStatus: 'out'
+        });
+      });
+    });
+
+    it('rows reached through a URL-seeded filter still open the product detail page', async () => {
+      const productService = serviceReturning([lowProduct]);
+      renderAt('/products?stockStatus=low', productService);
+      fireEvent.click(await screen.findByText(/Low Item/));
+      expect(await screen.findByText('Product detail')).toBeInTheDocument();
     });
   });
 });

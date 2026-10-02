@@ -290,8 +290,22 @@ export function createStockEventService(stockEventRepository, productRepository)
     return { event: persisted, errors: [] };
   }
 
+  /**
+   * The most recently recorded stock events across all products, newest
+   * first (Phase 7C dashboard feed). A thin read-only pass-through: rows are
+   * the stored events, including appliedQuantity and reversal links.
+   *
+   * @param {number} limit Positive integer.
+   * @returns {Promise<object[]>}
+   * @throws {RangeError} If limit is not a positive integer.
+   */
+  async function getRecentActivity(limit) {
+    return stockEventRepository.listRecent(limit);
+  }
+
   return {
     getHistory,
+    getRecentActivity,
     getLatestKnownCost,
     wouldOverRemove,
     addStock,

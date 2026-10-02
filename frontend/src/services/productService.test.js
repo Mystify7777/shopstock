@@ -517,4 +517,103 @@ describe('productService', () => {
       expect(result.matches.map((p) => p.id)).not.toContain(product.id);
     });
   });
+
+  describe('searchProducts stockStatus filter (Phase 7C)', () => {
+    async function seed(name, quantity, extra = {}) {
+      const { product } = await service.createProduct({ name, ...extra });
+      // quantity is owned by stock events; set the materialized value directly for fixtures
+      await db.products.update(product.id, { quantity });
+      return product;
+    }
+    const ids = (result) => result.matches.map((p) => p.id).sort();
+
+    it("'low' returns Low Stock only (not Out of Stock, not Normal)", async () => {
+      const out = await seed('Out', 0);
+      const low = await seed('Low', 3);
+      const edge = await seed('Edge', 5); // inclusive threshold
+      const ok = await seed('Fine', 50);
+      const result = await service.searchProducts('', { stockStatus: 'low' });
+      expect(ids(result)).toEqual([low.id, edge.id].sort());
+      expect(ids(result)).not.toContain(out.id);
+      expect(ids(result)).not.toContain(ok.id);
+    });
+
+    it("'out' returns Out of Stock only", async () => {
+      const out = await seed('Out', 0);
+      await seed('Low', 2);
+      await seed('Fine', 50);
+      expect(ids(await service.searchProducts('', { stockStatus: 'out' }))).toEqual([out.id]);
+    });
+
+    it('works as a filters-only search (empty query) with the standard result shape', async () => {
+      await seed('Out', 0);
+      const result = await service.searchProducts('', { stockStatus: 'out' });
+      expect(result.related).toEqual([]);
+      expect(result.hasExactMatch).toBe(false);
+      expect(result.matches).toHaveLength(1);
+    });
+
+    it('combines with a text query', async () => {
+      const lowParle = await seed('Parle-G', 2);
+      await seed('Parle Marie', 40);
+      await seed('Dettol', 1);
+      const result = await service.searchProducts('parle', { stockStatus: 'low' });
+      expect(result.matches.map((p) => p.id)).toEqual([lowParle.id]);
+    });
+
+    it('ANDs with a classification filter', async () => {
+      const cat = await classificationRepository.create('category', {
+        id: 'cat-snacks',
+        name: 'Snacks',
+        archived: false,
+        isDefault: false
+      });
+      const hit = await seed('A', 0, { categoryId: 'cat-snacks' });
+      await seed('B', 0);
+      await seed('C', 20, { categoryId: 'cat-snacks' });
+      const result = await service.searchProducts('', { categoryId: 'cat-snacks', stockStatus: 'out' });
+      expect(result.matches.map((p) => p.id)).toEqual([hit.id]);
+      expect(cat).toBeDefined();
+    });
+
+    it('respects a per-product threshold override and low-stock-disabled', async () => {
+      const raised = await seed('Raised', 8, { lowStockThreshold: 10 });
+      await seed('Disabled', 2, { lowStockDisabled: true });
+      expect(ids(await service.searchProducts('', { stockStatus: 'low' }))).toEqual([raised.id]);
+    });
+
+    it('excludes archived products', async () => {
+      const p = await seed('Gone', 0);
+      await service.updateProduct(await service.getProduct(p.id), { archived: true });
+      expect((await service.searchProducts('', { stockStatus: 'out' })).matches).toEqual([]);
+    });
+
+    it('ignores an unrecognised value: no active filter, so no repository work', async () => {
+      await seed('Out', 0);
+      const result = await service.searchProducts('', { stockStatus: 'bogus' });
+      expect(result).toEqual({ matches: [], related: [], hasExactMatch: false });
+    });
+
+    it("an unrecognised value does not narrow other filters", async () => {
+      const a = await seed('Alpha', 0);
+      const result = await service.searchProducts('alpha', { stockStatus: 'bogus' });
+      expect(result.matches.map((p) => p.id)).toEqual([a.id]);
+    });
+
+    it('agrees with the dashboard summary for the same data (counts never disagree with the list)', async () => {
+      const { summarizeInventory } = await import('../domain/dashboard/dashboardSummary.js');
+      await seed('O1', 0);
+      await seed('O2', 0);
+      await seed('L1', 1);
+      await seed('L2', 5);
+      await seed('N1', 6);
+      const summary = summarizeInventory(await service.listProducts(), { globalDefaultThreshold: 5 });
+      const low = await service.searchProducts('', { stockStatus: 'low' });
+      const out = await service.searchProducts('', { stockStatus: 'out' });
+      expect(low.matches).toHaveLength(summary.lowStockCount);
+      expect(out.matches).toHaveLength(summary.outOfStockCount);
+      expect(ids(low)).toEqual(summary.lowStock.map((p) => p.id).sort());
+      expect(ids(out)).toEqual(summary.outOfStock.map((p) => p.id).sort());
+    });
+  });
 });

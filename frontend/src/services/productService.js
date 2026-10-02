@@ -36,6 +36,16 @@ import { createProduct, updateProduct } from '../domain/product/productFactory.j
 import { generateId } from '../domain/shared/ids.js';
 import { timestampNow } from '../domain/shared/dates.js';
 import { searchProducts as domainSearchProducts, isEmptyQuery } from '../domain/search/productSearch.js';
+import { classifyStockStatus, STOCK_STATUS } from '../domain/classification/lowStock.js';
+import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
+
+// Phase 7C: values accepted by the optional `stockStatus` search filter,
+// mapped to the domain's stock statuses. Anything else is not a filter.
+const STOCK_STATUS_FILTERS = Object.freeze({ low: STOCK_STATUS.LOW, out: STOCK_STATUS.OUT });
+
+function isStockStatusFilter(value) {
+  return typeof value === 'string' && Object.hasOwn(STOCK_STATUS_FILTERS, value);
+}
 
 // ---------------------------------------------------------------------------
 // Tracked-field mapping
@@ -225,22 +235,42 @@ export function createProductService(productRepository, classificationRepository
    *     pass (an inactive/empty group is always considered passing --
    *     it imposes no constraint).
    *
+   * Phase 7C addition: an optional stockStatus filter ('low' | 'out').
+   * It uses classifyStockStatus() -- the same function and global default
+   * the dashboard and list rows use -- so a dashboard count and the list
+   * it links to always agree. 'low' means Low Stock only (not Out of
+   * Stock). Any other value is ignored, like an inactive group. It ANDs
+   * with the classification groups.
+   *
    * @param {object[]} products
-   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[] }} filters
+   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[], stockStatus?: 'low'|'out'|null }} filters
    * @returns {object[]}
    */
   function applyFilters(products, filters) {
-    const { categoryId = null, locationIds = [], tagIds = [] } = filters;
+    const { categoryId = null, locationIds = [], tagIds = [], stockStatus = null } = filters;
 
     const hasCategoryFilter = Boolean(categoryId);
     const hasLocationFilter = locationIds.length > 0;
     const hasTagFilter = tagIds.length > 0;
+    const hasStockStatusFilter = isStockStatusFilter(stockStatus);
 
-    if (!hasCategoryFilter && !hasLocationFilter && !hasTagFilter) {
+    if (!hasCategoryFilter && !hasLocationFilter && !hasTagFilter && !hasStockStatusFilter) {
       return products;
     }
 
     return products.filter((product) => {
+      if (
+        hasStockStatusFilter &&
+        classifyStockStatus({
+          quantity: product.quantity,
+          globalDefaultThreshold: DEFAULT_LOW_STOCK_THRESHOLD,
+          productThresholdOverride: product.lowStockThreshold,
+          lowStockDisabled: product.lowStockDisabled
+        }) !== STOCK_STATUS_FILTERS[stockStatus]
+      ) {
+        return false;
+      }
+
       if (hasCategoryFilter && product.categoryId !== categoryId) {
         return false;
       }
@@ -333,13 +363,16 @@ export function createProductService(productRepository, classificationRepository
    * productRepository.list()), independent of filter state.
    *
    * @param {string} query
-   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[] }} [filters]
+   * @param {{ categoryId?: string|null, locationIds?: string[], tagIds?: string[], stockStatus?: 'low'|'out'|null }} [filters]
    * @returns {Promise<{ matches: object[], related: object[], hasExactMatch: boolean }>}
    */
   async function searchProductsUseCase(query, filters = {}) {
     const queryIsEmpty = isEmptyQuery(query);
     const hasActiveFilters = Boolean(
-      filters.categoryId || (filters.locationIds && filters.locationIds.length > 0) || (filters.tagIds && filters.tagIds.length > 0)
+      filters.categoryId ||
+        (filters.locationIds && filters.locationIds.length > 0) ||
+        (filters.tagIds && filters.tagIds.length > 0) ||
+        isStockStatusFilter(filters.stockStatus)
     );
 
     if (queryIsEmpty && !hasActiveFilters) {

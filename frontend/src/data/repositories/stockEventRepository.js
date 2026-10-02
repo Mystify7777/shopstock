@@ -231,6 +231,32 @@ export function createStockEventRepository(db) {
   }
 
   // -------------------------------------------------------------------------
+  // listRecent (Phase 7C)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Return the most recently recorded stock event rows across ALL products,
+   * newest first (by recordedAt; ties broken deterministically by primary
+   * key). Read-only: used for the dashboard's recent-activity feed.
+   *
+   * Rows are returned exactly as stored, including appliedQuantity, and
+   * include reversal events (reversalOf / reversedBy) as their own rows --
+   * history stays an honest record of what actually happened.
+   *
+   * Uses the existing recordedAt index; no scan of the whole table.
+   *
+   * @param {number} limit Positive integer: maximum rows to return.
+   * @returns {Promise<object[]>}
+   * @throws {RangeError} If limit is not a positive integer.
+   */
+  async function listRecent(limit) {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new RangeError('listRecent requires a positive integer limit.');
+    }
+    return db.stockEvents.orderBy('recordedAt').reverse().limit(limit).toArray();
+  }
+
+  // -------------------------------------------------------------------------
   // commit
   // -------------------------------------------------------------------------
 
@@ -466,6 +492,7 @@ export function createStockEventRepository(db) {
   return {
     getById,
     getByProductId,
+    listRecent,
     commit,
     commitReversal,
   };

@@ -7,6 +7,7 @@ import { createClassificationRepository } from './data/repositories/classificati
 import { createStockEventRepository } from './data/repositories/stockEventRepository.js';
 import { createProductService } from './services/productService.js';
 import { createStockEventService } from './services/stockEventService.js';
+import { createClassificationService } from './services/classificationService.js';
 import { createSessionStore } from './auth/sessionStore.js';
 import { createAuthClient } from './auth/authClient.js';
 import { createAuthManager } from './auth/authManager.js';
@@ -19,6 +20,8 @@ import { AppProvider } from './contexts/AppContext.jsx';
 import './styles/tokens.css';
 import './styles/base.css';
 import './styles/shell.css';
+import './styles/dashboard.css';
+import './styles/classifications.css';
 
 // Composition root: this is the one place application dependencies are
 // constructed and wired together. Everything below this point receives
@@ -69,6 +72,7 @@ const classificationRepository = createClassificationRepository(db);
 const stockEventRepository = createStockEventRepository(db);
 const productService = createProductService(productRepository, classificationRepository);
 const stockEventService = createStockEventService(stockEventRepository, productRepository);
+const classificationService = createClassificationService(classificationRepository, productService);
 
 const sessionStore = createSessionStore(db);
 const authClient = createAuthClient(API_BASE_URL);
@@ -106,6 +110,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       services={{
         productService,
         stockEventService,
+        classificationService,
         classificationRepository,
         authManager,
         apiClient,

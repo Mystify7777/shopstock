@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -2871,7 +2871,7 @@ exists in `package.json` (not added). One full-suite run showed a single
 unidentified failure that did not reproduce in 9 further full runs
 (5 with these changes, 4 on the untouched baseline).
 
-### Phase 7B (#18) — Application shell, navigation and routes — ✅ COMPLETE (pending review)
+### Phase 7B (#18) — Application shell, navigation and routes — ✅ COMPLETE
 
 Frontend only (backend, domain, repositories, services and sync
 untouched). Contract approved before implementation; decisions:
@@ -2918,11 +2918,69 @@ Mutation-checked (nav `end`, logout guard).
 work offline); `git diff --check` clean; no `lint` script; all touched
 files LF-only.
 
-**Deferred:** Dashboard/classification nav entries (7C); page headers,
+**Deferred:** (Dashboard/classification nav entries landed in 7C); page headers,
 button→link conversion and page bodies (7D–7F); real notifications and
 sync indicators (7G); full responsive/a11y pass incl. skip link (7H).
 Hosting must rewrite unknown paths to `index.html` for deep links
 (deployment concern, not changed here).
+
+### Phase 7C (#19) — Dashboard + classification management — ✅ COMPLETE
+
+Frontend only (backend, StockEvent semantics, Product LWW, sync queue and
+auth untouched). Contract approved after investigation; see
+ARCHITECTURE.md "Dashboard and classification management (Phase 7C)".
+
+**Routes:** `/` Dashboard (replaces the redirect); `/classifications` →
+`/classifications/categories`; `/classifications/{categories,locations,
+tags,units}`. An unknown type falls through to the standard Not Found.
+Nav is now Dashboard, Products, Classifications (3 items, so the 7B
+mobile bottom bar is active).
+
+**Added:** `domain/dashboard/dashboardSummary.js`;
+`stockEventRepository.listRecent` + `stockEventService.getRecentActivity`;
+`services/classificationService.js` (list/create/rename/archive/restore/
+previewRemoval/removeWithFallback); `pages/DashboardPage.jsx`,
+`pages/ClassificationsPage.jsx`, `components/ClassificationRemoval.jsx`
+(existing inline `role="alertdialog"` pattern), `components/ResourceView.jsx`
++ `hooks/useAsyncResource.js` (extracted for three concrete consumers:
+inventory section, activity section, classification list),
+`components/classificationTypes.js`, `styles/dashboard.css`,
+`styles/classifications.css` (tokens only).
+
+**Minimal additive seam in existing code:** `ProductListPage` reads
+`?q=` / `?stockStatus=` (see ARCHITECTURE); `productService` gained the
+optional `stockStatus` filter; `main.jsx`/`AppContext` wire the new service.
+
+**Tests (327 added in total):** dashboard domain; `listRecent` /
+`getRecentActivity`; `classificationService` against real Dexie (all four
+types, removal for category/location/tag, unit refusal, partial failure,
+retry, archive-failure); the `stockStatus` filter (incl. agreement with
+the dashboard summary); the list URL seam; `useAsyncResource`; the
+dashboard page (derived values, per-section loading/empty/error/retry,
+independent-section failure, navigation into the real Product List); the
+classification page for all four types (list/add/rename/archive/restore,
+removal confirmation, counts, cancel, partial failure, retry) plus
+real-service integration; routing/nav (new routes, invalid type, active
+states); token-contract coverage for the new CSS. Mutation-checked:
+archive-on-failure, product-field selection, dialog-on-failure, dashboard
+archived exclusion.
+
+**Existing tests changed (legitimately invalidated by the new root and
+nav):** only in `AppRoutes.test.jsx` — the `/` redirect test, the
+redirect-history test (now the `/classifications` redirect), the default
+bottom-bar assertion (now true with 3 items), and the active-nav and
+unknown-route lists, all asserting at least as much as before. Existing
+`ProductListPage` and `productService` tests are unchanged and pass as-is.
+
+**Validation:** frontend 48 files / 1521 tests pass (baseline 43 / 1194);
+`vite build` passes; `git diff --check` clean; all touched files LF-only;
+no `lint` script.
+
+**Deliberately not done:** inventory cost/profit/total units, charts, sync
+metrics, default seeding, duplicate-name rules, `isDefault` behavior,
+optional product archival during removal, currency symbol (Issue #19 does
+not require one), any Product List redesign (7D), detail/forms (7E/7F),
+notifications (7G).
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

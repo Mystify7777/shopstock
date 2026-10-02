@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
 import { classifyStockStatus, needsAttention } from '../domain/classification/lowStock.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
@@ -7,6 +7,18 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue.js';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition.js';
 
 const SEARCH_DEBOUNCE_MS = 450;
+
+// Phase 7C: the only values the ?stockStatus= URL parameter accepts, with
+// the wording shown to the user while one is active. Anything else in the
+// URL is ignored.
+const STOCK_STATUS_PARAM_LABELS = {
+  low: 'low stock products',
+  out: 'out-of-stock products'
+};
+
+function parseStockStatusParam(value) {
+  return typeof value === 'string' && Object.hasOwn(STOCK_STATUS_PARAM_LABELS, value) ? value : null;
+}
 
 /**
  * Product list screen.
@@ -41,6 +53,14 @@ const SEARCH_DEBOUNCE_MS = 450;
  * the query/filter effect below -- selecting a filter must never
  * re-trigger a classification-options reload (Phase 4C locked contract).
  *
+ * Phase 7C (dashboard compatibility seam): the page reads two optional URL
+ * parameters -- ?q=<text> (initial search text) and ?stockStatus=low|out
+ * (a stock-status filter) -- so the dashboard can link into it. They only
+ * SEED existing state (and re-seed it if the URL changes while mounted);
+ * typing and the filter controls still work exactly as before and do not
+ * write back to the URL. An active stock-status filter is always shown in
+ * words and can be cleared with the existing "Clear filters" button.
+ *
  * Voice search (Phase 4D): an input adapter only -- a microphone button
  * beside the search field, present only when the browser supports the
  * Web Speech API. On a final transcript, it calls the SAME setQuery()
@@ -52,12 +72,15 @@ const SEARCH_DEBOUNCE_MS = 450;
 export default function ProductListPage() {
   const { productService, classificationRepository } = useAppContext();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get('q') ?? '';
+  const urlStockStatus = parseStockStatusParam(searchParams.get('stockStatus'));
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(urlQuery);
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
 
   // Voice search (Phase 4D) -- input adapter only. A final transcript
@@ -77,7 +100,17 @@ export default function ProductListPage() {
   const [categoryId, setCategoryId] = useState(null);
   const [locationIds, setLocationIds] = useState([]);
   const [tagIds, setTagIds] = useState([]);
-  const hasActiveFilters = Boolean(categoryId) || locationIds.length > 0 || tagIds.length > 0;
+  const [stockStatus, setStockStatus] = useState(urlStockStatus);
+  const hasActiveFilters =
+    Boolean(categoryId) || locationIds.length > 0 || tagIds.length > 0 || Boolean(stockStatus);
+
+  // Phase 7C: if the URL's parameters change while this page stays mounted
+  // (e.g. browser back/forward between two /products?... URLs), re-seed the
+  // state from them. On mount this sets the values already used above.
+  useEffect(() => {
+    setQuery(urlQuery);
+    setStockStatus(urlStockStatus);
+  }, [urlQuery, urlStockStatus]);
 
   const isSearching = debouncedQuery.trim().length > 0 || hasActiveFilters;
 
@@ -168,7 +201,13 @@ export default function ProductListPage() {
     setSearchError(null);
 
     productService
-      .searchProducts(debouncedQuery, { categoryId, locationIds, tagIds })
+      .searchProducts(debouncedQuery, {
+        categoryId,
+        locationIds,
+        tagIds,
+        // Only present when set, so the filter object is unchanged otherwise.
+        ...(stockStatus ? { stockStatus } : {})
+      })
       .then((result) => {
         if (cancelled) return;
         setSearchResults(result);
@@ -183,7 +222,7 @@ export default function ProductListPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, isSearching, categoryId, locationIds, tagIds, productService]);
+  }, [debouncedQuery, isSearching, categoryId, locationIds, tagIds, stockStatus, productService]);
 
   if (loading) {
     return <p>Loading products&hellip;</p>;
@@ -228,6 +267,7 @@ export default function ProductListPage() {
     setCategoryId(null);
     setLocationIds([]);
     setTagIds([]);
+    setStockStatus(null);
   }
 
   const displayedProducts = isSearching
@@ -305,6 +345,8 @@ export default function ProductListPage() {
             </label>
           ))}
         </fieldset>
+
+        {stockStatus && <p>Showing {STOCK_STATUS_PARAM_LABELS[stockStatus]} only.</p>}
 
         {hasActiveFilters && (
           <button type="button" onClick={clearFilters}>

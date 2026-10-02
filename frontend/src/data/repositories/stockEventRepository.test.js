@@ -164,6 +164,125 @@ describe('stockEventRepository', () => {
   });
 
   // =========================================================================
+  // listRecent (Phase 7C)
+  // =========================================================================
+
+  describe('listRecent', () => {
+    /** Insert a row with a controlled recordedAt, bypassing commit() so
+     *  ordering is deterministic (commit timestamps can tie within a ms). */
+    async function seedEventRow(overrides) {
+      const row = {
+        id: `evt-${Math.random().toString(36).slice(2)}`,
+        productId: 'p-1',
+        type: 'ADD',
+        quantity: 1,
+        appliedQuantity: 1,
+        recordedAt: '2026-09-01T10:00:00.000Z',
+        comment: null,
+        reversalOf: null,
+        reversedBy: null,
+        ...overrides,
+      };
+      await db.stockEvents.add(row);
+      return row;
+    }
+
+    it('returns an empty array when there are no events', async () => {
+      expect(await repo.listRecent(10)).toEqual([]);
+    });
+
+    it('returns events across ALL products, newest first', async () => {
+      const oldest = await seedEventRow({ id: 'a', productId: 'p-1', recordedAt: '2026-09-01T10:00:00.000Z' });
+      const newest = await seedEventRow({ id: 'c', productId: 'p-3', recordedAt: '2026-09-03T10:00:00.000Z' });
+      const middle = await seedEventRow({ id: 'b', productId: 'p-2', recordedAt: '2026-09-02T10:00:00.000Z' });
+      const rows = await repo.listRecent(10);
+      expect(rows.map((r) => r.id)).toEqual([newest.id, middle.id, oldest.id]);
+    });
+
+    it('honors the limit, keeping the newest rows', async () => {
+      for (let day = 1; day <= 5; day++) {
+        await seedEventRow({ id: `e${day}`, recordedAt: `2026-09-0${day}T10:00:00.000Z` });
+      }
+      const rows = await repo.listRecent(2);
+      expect(rows.map((r) => r.id)).toEqual(['e5', 'e4']);
+    });
+
+    it('returns fewer than the limit when fewer events exist', async () => {
+      await seedEventRow({ id: 'only' });
+      expect(await repo.listRecent(50)).toHaveLength(1);
+    });
+
+    it('breaks recordedAt ties deterministically', async () => {
+      await seedEventRow({ id: 'tie-a', recordedAt: '2026-09-01T10:00:00.000Z' });
+      await seedEventRow({ id: 'tie-b', recordedAt: '2026-09-01T10:00:00.000Z' });
+      const first = (await repo.listRecent(10)).map((r) => r.id);
+      const second = (await repo.listRecent(10)).map((r) => r.id);
+      expect(first).toEqual(second);
+      expect(first).toHaveLength(2);
+    });
+
+    it('returns stored rows including appliedQuantity from real commits', async () => {
+      const product = await seedProduct(db);
+      const { event, appliedQuantity } = await commitAddEvent(repo, product, 7);
+      const [row] = await repo.listRecent(5);
+      expect(row.id).toBe(event.id);
+      expect(row.type).toBe('ADD');
+      expect(row.quantity).toBe(7);
+      expect(row.appliedQuantity).toBe(appliedQuantity);
+      expect(row.productId).toBe(product.id);
+    });
+
+    it('represents a clamped over-removal by what actually applied', async () => {
+      const product = await seedProduct(db);
+      const { updatedProduct } = await commitAddEvent(repo, product, 5);
+      const removeEvent = makeRemoveEvent(product.id, 8);
+      const { nextQuantity, appliedQuantity } = applyStockEvent(updatedProduct.quantity, removeEvent);
+      await repo.commit({
+        event: removeEvent,
+        appliedQuantity,
+        nextQuantity,
+        expectedCurrentQuantity: updatedProduct.quantity,
+        product: updatedProduct,
+      });
+      const row = (await repo.listRecent(10)).find((r) => r.id === removeEvent.id);
+      expect(row.quantity).toBe(8);
+      expect(row.appliedQuantity).toBe(5);
+    });
+
+    it('includes reversal events as their own rows, linked to the original', async () => {
+      const product = await seedProduct(db);
+      const { event, updatedProduct, appliedQuantity } = await commitAddEvent(repo, product, 4);
+      const { reversalEvent } = createReversalEvent(event, appliedQuantity);
+      const { nextQuantity, appliedQuantity: reversalApplied } =
+        applyStockEvent(updatedProduct.quantity, reversalEvent);
+      await repo.commitReversal({
+        reversalEvent,
+        originalEventId: event.id,
+        appliedQuantity: reversalApplied,
+        nextQuantity,
+        expectedCurrentQuantity: updatedProduct.quantity,
+        product: updatedProduct,
+      });
+      const rows = await repo.listRecent(10);
+      const reversalRow = rows.find((r) => r.id === reversalEvent.id);
+      const originalRow = rows.find((r) => r.id === event.id);
+      expect(reversalRow.reversalOf).toBe(event.id);
+      expect(originalRow.reversedBy).toBe(reversalEvent.id);
+    });
+
+    it('does not modify stored data (read-only)', async () => {
+      await seedEventRow({ id: 'x' });
+      const before = await db.stockEvents.toArray();
+      await repo.listRecent(10);
+      expect(await db.stockEvents.toArray()).toEqual(before);
+    });
+
+    it.each([0, -1, 1.5, '3', null, undefined, NaN])('rejects the invalid limit %s', async (bad) => {
+      await expect(repo.listRecent(bad)).rejects.toThrow(RangeError);
+    });
+  });
+
+  // =========================================================================
   // commit — input validation
   // =========================================================================
 

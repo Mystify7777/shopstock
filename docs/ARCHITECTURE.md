@@ -1003,6 +1003,48 @@ of a possible provider, not a hard dependency.
   gate's own attempt finds no token and shows plain login without the
   "session expired" explanation. Safe; only the message is lost.
 
+### Dashboard and classification management (Phase 7C)
+
+- **Dashboard (`/`)** shows only figures derivable from authoritative
+  data (`domain/dashboard/dashboardSummary.js`, pure): active product
+  count, Low/Out counts and lists (via `classifyStockStatus`, the single
+  stock-status source), and expected selling value over **priced**
+  products only, with the unpriced count disclosed. Deliberately absent:
+  inventory cost and profit (cost of remaining stock is not tracked, so
+  any total is an estimate), and total units (mixed units). Archived
+  products are excluded from every figure.
+- **"Recently updated" means recent stock activity** (PRD §29: "recently
+  changed inventory", with signed stock deltas), read via the additive
+  `stockEventRepository.listRecent(limit)` /
+  `stockEventService.getRecentActivity(limit)` (uses the `recordedAt`
+  index; read-only). It does NOT use `product.updatedAt`, which stock
+  operations intentionally never bump (it is the Product LWW clock).
+  A clamped over-removal is shown by `appliedQuantity`.
+- **Dashboard → Product List seam:** `ProductListPage` seeds its existing
+  state from `?q=` and `?stockStatus=low|out` (re-seeding if the URL
+  changes while mounted; typing does not write back). `stockStatus` is an
+  additive `productService.searchProducts` filter using the same
+  `classifyStockStatus` + global default, so a dashboard count and the
+  list it links to cannot disagree.
+- **`classificationService`** is a thin orchestration layer over
+  `classificationRepository`, `productService` and
+  `previewClassificationDeletion`; it adds no classification rules (no
+  uniqueness, no seeding, no `isDefault` behavior; blank names are
+  refused because the backend rejects them). "Affected product" is the
+  domain's definition, computed over ALL products (active and archived)
+  so none keeps a reference to a removed classification.
+- **Removal is NOT atomic.** Each product update is its own transaction.
+  `removeWithFallback` updates products first (re-reading each just
+  before writing), archives the classification only if every update
+  succeeded, and reports `completed | partial | archive-failed`; on any
+  failure the classification stays active and retry is explicit and
+  idempotent. Units have no removal (the domain defines no unit fallback).
+- **Known limits (pre-existing, not changed):** no pull sync exists, so
+  classifications are device-local and pushed one way; defaults in
+  `shared/constants.js` are never seeded; the product form cannot yet
+  assign classifications or prices (7F), so affected counts and the
+  dashboard value will usually be empty until then.
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by

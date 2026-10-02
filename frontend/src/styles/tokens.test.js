@@ -12,6 +12,8 @@ const read = (name) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8
 const tokensCss = read('tokens.css');
 const baseCss = read('base.css');
 const shellCss = read('shell.css');
+const dashboardCss = read('dashboard.css');
+const classificationsCss = read('classifications.css');
 
 // Parse `--name: value;` declarations from the first :root block only
 // (later blocks are media-query overrides).
@@ -159,6 +161,8 @@ describe('tokens.css: required coverage (Issue #17)', () => {
     expect(tokensCss).not.toMatch(/gradient\(/);
     expect(baseCss).not.toMatch(/gradient\(/);
     expect(shellCss).not.toMatch(/gradient\(/);
+    expect(dashboardCss).not.toMatch(/gradient\(/);
+    expect(classificationsCss).not.toMatch(/gradient\(/);
   });
 });
 
@@ -224,6 +228,8 @@ describe('tokens.css: WCAG AA contrast', () => {
 describe.each([
   ['base.css', baseCss],
   ['shell.css', shellCss],
+  ['dashboard.css', dashboardCss],
+  ['classifications.css', classificationsCss],
 ])('%s', (_name, css) => {
   it('only references tokens that exist in tokens.css', () => {
     const used = [...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);

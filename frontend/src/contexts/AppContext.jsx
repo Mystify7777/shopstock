@@ -15,7 +15,8 @@ const AppContext = createContext(null);
 /**
  * @param {{ children: React.ReactNode, services: object }} props
  *   services shape: { productService, stockEventService,
- *   classificationRepository, authManager, apiClient, syncDrainer }
+ *   classificationService, classificationRepository, authManager,
+ *   apiClient, syncDrainer }
  */
 export function AppProvider({ children, services }) {
   return (

@@ -1,0 +1,68 @@
+/*
+ * Dashboard (Phase 7C). Tokens only; no decoration. Page-level layout for
+ * the one screen -- the shared frame lives in shell.css.
+ */
+
+.dashboard__search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.dashboard__search label {
+  flex-basis: 100%;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.dashboard__search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--layout-width-narrow) / 5), 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.dashboard__stats > div {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.dashboard__stats dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+}
+
+.dashboard__stats dd {
+  margin: 0;
+  font-size: var(--font-size-heading-page);
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: var(--font-numeric);
+}
+
+.dashboard__group h3 {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* A section that failed to load (ResourceView). Text carries the meaning. */
+.resource-error {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+}
+
+.resource-error p {
+  margin: 0 0 var(--space-2);
+}
