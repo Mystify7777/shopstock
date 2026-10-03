@@ -1045,6 +1045,29 @@ of a possible provider, not a hard dependency.
   assign classifications or prices (7F), so affected counts and the
   dashboard value will usually be empty until then.
 
+### Products list (Phase 7D)
+
+- Presentation-only redesign of `ProductListPage`; search, filter semantics,
+  the stock-status classification, the `?q=` / `?stockStatus=` URL seam and
+  the service/repository contracts are unchanged.
+- **Display order** (`domain/product/productOrdering.js`, pure): the plain
+  browse list and filters-only results (empty query) are shown by name,
+  case-insensitive, unnamed products last, `id` as the deterministic
+  tiebreak. Text-query results keep their Fuse relevance order, and related
+  products keep their own ranking. This exists because
+  `productRepository.list()` returns primary-key (UUID) order.
+- **Rows** (`components/ProductRow.jsx`) are real links to `/products/:id`
+  showing name, quantity and a text stock-status label (the low/out label
+  keeps `role="status"`, pinned by tests; semantics revisited in 7H). The
+  unit and classification names are deliberately NOT shown: a Product holds
+  only ids, and resolving them would need a lookup this phase did not add.
+  Revisit after 7F.
+- The header, search and filters always render; only the list area shows
+  loading / error. Product-load and search failures offer Try again.
+- **Known limitation (pre-existing):** `stockEventService.getHistory`
+  orders by `recordedAt`, and two events recorded in the same millisecond
+  tie, falling back to the random primary key. See PROGRESS.md.
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by

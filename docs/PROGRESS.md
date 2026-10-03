@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -2981,6 +2981,91 @@ metrics, default seeding, duplicate-name rules, `isDefault` behavior,
 optional product archival during removal, currency symbol (Issue #19 does
 not require one), any Product List redesign (7D), detail/forms (7E/7F),
 notifications (7G).
+
+### Phase 7D (#20) — Products list / search / filter — ✅ COMPLETE
+
+Frontend + one repository-level tooling file. Backend, repositories,
+`productService`, the search domain, sync, auth, LWW and StockEvent
+semantics are untouched. Contract approved after investigation; see
+ARCHITECTURE.md "Products list (Phase 7D)".
+
+**Presentation:** `ProductListPage` restructured — a `Products` heading and
+an Add Product link (→ `/products/new`) that always render, with the search
+and filter controls; loading and errors affect only the list area. Product-
+load failure shows a friendly message, the underlying detail, Try again and
+a Go to Dashboard link (search still works if the plain list failed).
+Search failure keeps the query and filters and offers Try again. Closest
+matches are labelled when a text query has no exact match; "Searching…" no
+longer flashes "No products match". Filter groups with no options are not
+rendered; locations/tags are native checkboxes styled as chips (tick + weight
++ tint, not color alone); an active-filter count summary sits beside the
+existing Clear filters and the `Showing … only.` sentence.
+
+**Added:** `domain/product/productOrdering.js` (name order for browse and
+filters-only results; text-query relevance order untouched),
+`components/ProductRow.jsx` (real link row: name, quantity, text status;
+shared by browse, results, closest and related), `styles/products.css`
+(tokens only), an optional additive `showDetail` prop on `ResourceView`,
+and root `package.json` (see below).
+
+**Deliberately not done:** unit and classification names on rows (a Product
+holds only ids; no lookup layer added — revisit after 7F), per-row
+`role="status"` change (pinned by tests; 7H), URL write-back, pagination,
+any search/filter/service/repository change, forms, detail, notifications.
+
+**Existing tests:** every existing `ProductListPage` test passes unchanged
+(47 + the 9 seam tests from 7C).
+
+**Tests (+62, 1521 → 1583; 48 → 51 files):** ordering (14), `ProductRow`
+(15), `ResourceView` (5), 26 new page tests (header/navigation, controls
+during load/failure, retry, ordering, closest/exact/no-match, searching
+state, search retry, stale-response protection, filter presentation), and
+token-contract coverage for `products.css`. Mutation-checked: browse sort,
+relevance order for text queries, search retry.
+
+**Root verification command:** `npm run verify` (root `package.json`,
+`"private": true`, no dependencies, no workspaces) runs frontend tests →
+backend tests → frontend build → `git diff --check`, stopping at the first
+failure; each stage is also its own script (`verify:frontend`,
+`verify:backend`, `verify:build`, `verify:diff`). Documented in README.md.
+
+**Validation (this sandbox):** frontend 51 files / 1583 tests (three
+consecutive full runs); `vite build` passes; `git diff --check` clean;
+backend Mongo-free subset 75 tests / 20 suites / 0 failures. The backend
+integration tests (`mongodb-memory-server`) cannot run here because the
+sandbox blocks `fastdl.mongodb.org` (403), so `npm run verify` was observed
+to execute stage 1 (passed) and begin stage 2, but its backend stage was not
+completed in this environment; run it locally for a full result.
+
+**Finding (pre-existing, not fixed): flaky `stockEventService` history
+test.** `getHistory › returns events in recordedAt ascending order` failed
+2 of 12 isolated runs (~17%). The test records an ADD and a REMOVE back to
+back; both can share a millisecond `recordedAt`, and the repository's order
+then falls back to the random UUID primary key, so ADD/REMOVE can swap. This
+is the previously unidentified one-off failure noted during 7A. It is
+unrelated to 7D (the file is untouched) but makes `npm run verify`
+non-deterministic. Candidate fix, for review: a deterministic secondary
+order for same-timestamp events (and/or a test that does not depend on it).
+
+### Backend test tooling fix (after 7D): first-run MongoDB binary race
+
+A full backend run on Windows reported 354 tests, 333 pass, 21 cancelled — all
+of `locationRoutes.test.js` — with `Cannot unlock file ...\8.2.6.lock, because
+it is not locked by this process`. Cause: eleven test files each start their
+own `MongoMemoryReplSet` in parallel processes; on a machine where the binary
+is not cached they all try to download it at once, and
+`mongodb-memory-server`'s download lockfile can be double-acquired under
+contention, so the loser throws inside its `before` hook and every test in
+that file is cancelled. It only happens until the binary is cached, and is
+unrelated to the application code.
+
+Fix: `backend/package.json` gains `"pretest": "node tests/helpers/ensureMongoBinary.js"`.
+It obtains the binary once, in one process, before `node --test` starts; with
+the binary cached the library never takes the download lock, and if it cannot
+be obtained the run fails fast with a clear message. Verified here: fail-fast
+without network (1 s, no tests started) and the cached path (exit 0, no lock
+or download activity). The Mongo-backed tests themselves could not be run in
+this sandbox (no access to `fastdl.mongodb.org`).
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

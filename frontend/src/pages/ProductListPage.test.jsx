@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import ProductListPage from './ProductListPage.jsx';
 import { AppProvider } from '../contexts/AppContext.jsx';
@@ -944,6 +944,366 @@ describe('ProductListPage', () => {
       renderAt('/products?stockStatus=low', productService);
       fireEvent.click(await screen.findByText(/Low Item/));
       expect(await screen.findByText('Product detail')).toBeInTheDocument();
+    });
+  });
+
+  describe('Phase 7D presentation', () => {
+    const prod = (id, name, quantity = 50) => ({
+      id,
+      name,
+      quantity,
+      lowStockThreshold: null,
+      lowStockDisabled: false,
+      archived: false
+    });
+
+    function Where() {
+      const l = useLocation();
+      return <div data-testid="where">{l.pathname + l.search}</div>;
+    }
+
+    const OPTIONS = {
+      category: [{ id: 'cat1', name: 'Snacks' }],
+      location: [
+        { id: 'loc1', name: 'Counter' },
+        { id: 'loc2', name: 'Back Room' }
+      ],
+      tag: [{ id: 'tag1', name: 'popular' }]
+    };
+    const optionsRepo = (options = OPTIONS) => ({
+      list: vi.fn(async (type) => options[type] ?? [])
+    });
+
+    function renderPage(productService, { url = '/products', repo = makeMockClassificationRepository() } = {}) {
+      return render(
+        <AppProvider services={{ productService, classificationRepository: repo }}>
+          <MemoryRouter initialEntries={[url]}>
+            <Where />
+            <Routes>
+              <Route path="/" element={<div>Dashboard screen</div>} />
+              <Route path="/products" element={<ProductListPage />} />
+              <Route path="/products/new" element={<div>New product screen</div>} />
+              <Route path="/products/:id" element={<div>Product detail screen</div>} />
+            </Routes>
+          </MemoryRouter>
+        </AppProvider>
+      );
+    }
+
+    const rowNames = () =>
+      screen.queryAllByRole('listitem').map((li) => li.querySelector('.product-row__name')?.textContent);
+    const searchOf = (matches, extra = {}) =>
+      vi.fn().mockResolvedValue({ matches, related: [], hasExactMatch: false, ...extra });
+    const deferred = () => {
+      let resolve;
+      const promise = new Promise((r) => (resolve = r));
+      return { promise, resolve };
+    };
+
+    describe('header and navigation', () => {
+      it('has a Products heading and an Add Product link to /products/new', async () => {
+        renderPage(makeMockService());
+        expect(screen.getByRole('heading', { level: 1, name: 'Products' })).toBeInTheDocument();
+        const add = screen.getByRole('link', { name: 'Add Product' });
+        expect(add).toHaveAttribute('href', '/products/new');
+        fireEvent.click(add);
+        expect(await screen.findByText('New product screen')).toBeInTheDocument();
+        expect(screen.getByTestId('where').textContent).toBe('/products/new');
+      });
+
+      it('rows are real links to /products/:id and open the detail route', async () => {
+        renderPage(makeMockService({ listProducts: vi.fn().mockResolvedValue([prod('abc', 'Parle-G')]) }));
+        const link = await screen.findByRole('link', { name: /Parle-G/ });
+        expect(link).toHaveAttribute('href', '/products/abc');
+        fireEvent.click(link);
+        expect(await screen.findByText('Product detail screen')).toBeInTheDocument();
+      });
+
+      it('search results and related products are also links to their products', async () => {
+        const service = makeMockService({
+          searchProducts: vi.fn().mockResolvedValue({
+            matches: [prod('m1', 'Parle-G')],
+            related: [prod('r1', 'Good Day')],
+            hasExactMatch: false
+          })
+        });
+        renderPage(service, { url: '/products?q=parleg' });
+        expect(await screen.findByRole('link', { name: /Parle-G/ })).toHaveAttribute('href', '/products/m1');
+        expect(screen.getByRole('link', { name: /Good Day/ })).toHaveAttribute('href', '/products/r1');
+      });
+    });
+
+    describe('controls stay available while the list loads or fails', () => {
+      it('shows the header, Add Product and search immediately, with a loading state only in the list area', () => {
+        renderPage(makeMockService({ listProducts: vi.fn(() => new Promise(() => {})) }));
+        expect(screen.getByRole('heading', { name: 'Products' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Add Product' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Search')).toBeInTheDocument();
+        expect(screen.getByText(/loading products/i)).toBeInTheDocument();
+      });
+
+      it('on a failed load: friendly message, the underlying detail, Try again, and a Dashboard link', async () => {
+        renderPage(makeMockService({ listProducts: vi.fn().mockRejectedValue(new Error('database unavailable')) }));
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent("Couldn't load your products.");
+        expect(screen.getByText('database unavailable')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toHaveAttribute('href', '/');
+        // header and search are still there
+        expect(screen.getByRole('link', { name: 'Add Product' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Search')).toBeInTheDocument();
+      });
+
+      it('Try again reloads and shows the products; the error and Dashboard link go away', async () => {
+        const listProducts = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('flaky'))
+          .mockResolvedValueOnce([prod('p1', 'Parle-G')]);
+        renderPage(makeMockService({ listProducts }));
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Go to Dashboard' })).not.toBeInTheDocument();
+        expect(listProducts).toHaveBeenCalledTimes(2);
+      });
+
+      it('"Go to Dashboard" navigates to the dashboard', async () => {
+        renderPage(makeMockService({ listProducts: vi.fn().mockRejectedValue(new Error('x')) }));
+        fireEvent.click(await screen.findByRole('link', { name: 'Go to Dashboard' }));
+        expect(await screen.findByText('Dashboard screen')).toBeInTheDocument();
+      });
+
+      it('search still works when the plain product list failed to load', async () => {
+        const service = makeMockService({
+          listProducts: vi.fn().mockRejectedValue(new Error('list down')),
+          searchProducts: searchOf([prod('m1', 'Parle-G')], { hasExactMatch: true })
+        });
+        renderPage(service, { url: '/products?q=parle-g' });
+
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+        expect(screen.queryByText('list down')).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Go to Dashboard' })).not.toBeInTheDocument();
+      });
+    });
+
+    describe('ordering', () => {
+      it('browse list is sorted by name, case-insensitively, unnamed last', async () => {
+        renderPage(
+          makeMockService({
+            listProducts: vi
+              .fn()
+              .mockResolvedValue([prod('1', 'Zeta'), prod('2', null), prod('3', 'apple'), prod('4', 'Mango')])
+          })
+        );
+        await screen.findByText(/Zeta/);
+        expect(rowNames()).toEqual(['apple', 'Mango', 'Zeta', 'Unnamed product']);
+      });
+
+      it('filters-only results (no text query) are sorted by name', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([prod('1', 'Zeta'), prod('2', 'Alpha')]) }), {
+          url: '/products?stockStatus=low'
+        });
+        await screen.findByText(/Alpha/);
+        expect(rowNames()).toEqual(['Alpha', 'Zeta']);
+      });
+
+      it('text-query results keep the search relevance order', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([prod('1', 'Zeta'), prod('2', 'Alpha')]) }), {
+          url: '/products?q=ze'
+        });
+        await screen.findByText(/Alpha/);
+        expect(rowNames()).toEqual(['Zeta', 'Alpha']);
+      });
+
+      it('related products keep their own order', async () => {
+        const service = makeMockService({
+          searchProducts: vi.fn().mockResolvedValue({
+            matches: [prod('m', 'Match')],
+            related: [prod('r1', 'Zulu'), prod('r2', 'Alpha')],
+            hasExactMatch: false
+          })
+        });
+        renderPage(service, { url: '/products?q=mat' });
+        await screen.findByText(/Zulu/);
+        expect(rowNames()).toEqual(['Match', 'Zulu', 'Alpha']);
+      });
+    });
+
+    describe('search result states', () => {
+      it('labels closest matches when a text query has no exact match', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([prod('1', 'Parle-G')]) }), {
+          url: '/products?q=parleg'
+        });
+        expect(await screen.findByRole('heading', { name: 'Closest matches' })).toBeInTheDocument();
+        expect(screen.getByText('No exact match for “parleg”.')).toBeInTheDocument();
+      });
+
+      it('adds no closest-matches wording for an exact match', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([prod('1', 'Parle-G')], { hasExactMatch: true }) }), {
+          url: '/products?q=parle-g'
+        });
+        await screen.findByText(/Parle-G/);
+        expect(screen.queryByRole('heading', { name: 'Closest matches' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/no exact match/i)).not.toBeInTheDocument();
+      });
+
+      it('adds no closest-matches wording to a filters-only search', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([prod('1', 'Parle-G')]) }), {
+          url: '/products?stockStatus=low'
+        });
+        await screen.findByText(/Parle-G/);
+        expect(screen.queryByRole('heading', { name: 'Closest matches' })).not.toBeInTheDocument();
+      });
+
+      it('shows only the no-match message (no closest heading) when nothing matches', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([]) }), { url: '/products?q=zzz' });
+        expect(await screen.findByText('No products match your search.')).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Closest matches' })).not.toBeInTheDocument();
+      });
+
+      it('shows a searching state, not a false "no match" flash, while the search is pending', async () => {
+        const pending = deferred();
+        const service = makeMockService({ searchProducts: vi.fn(() => pending.promise) });
+        renderPage(service, { url: '/products?q=parle' });
+
+        expect(screen.getByText(/searching/i)).toBeInTheDocument();
+        expect(screen.queryByText('No products match your search.')).not.toBeInTheDocument();
+
+        pending.resolve({ matches: [prod('1', 'Parle-G')], related: [], hasExactMatch: true });
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+        expect(screen.queryByText(/searching/i)).not.toBeInTheDocument();
+      });
+
+      describe('search failure', () => {
+        it('shows a friendly message and detail, keeps the query and filters, and Try again re-runs the same search', async () => {
+          const searchProducts = vi
+            .fn()
+            .mockRejectedValueOnce(new Error('index unavailable'))
+            .mockResolvedValueOnce({ matches: [prod('1', 'Parle-G')], related: [], hasExactMatch: true });
+          renderPage(makeMockService({ searchProducts }), { url: '/products?q=parle&stockStatus=low' });
+
+          const alert = await screen.findByRole('alert');
+          expect(alert).toHaveTextContent("Couldn’t run that search. Your search and filters are kept.");
+          expect(screen.getByText('index unavailable')).toBeInTheDocument();
+          expect(screen.getByLabelText('Search')).toHaveValue('parle');
+          expect(screen.getByText('Showing low stock products only.')).toBeInTheDocument();
+
+          fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+          expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+          expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+          expect(searchProducts).toHaveBeenCalledTimes(2);
+          expect(searchProducts.mock.calls[1]).toEqual(searchProducts.mock.calls[0]);
+        });
+      });
+
+      it('ignores a stale response that arrives after the search changed', async () => {
+        const slow = deferred();
+        const searchProducts = vi.fn((query) =>
+          query === 'old'
+            ? slow.promise
+            : Promise.resolve({ matches: [prod('new', 'Fresh Result')], related: [], hasExactMatch: true })
+        );
+        render(
+          <AppProvider
+            services={{
+              productService: makeMockService({ searchProducts }),
+              classificationRepository: makeMockClassificationRepository()
+            }}
+          >
+            <MemoryRouter initialEntries={['/products?q=old']}>
+              <Link to="/products?q=new">go-new</Link>
+              <Routes>
+                <Route path="/products" element={<ProductListPage />} />
+              </Routes>
+            </MemoryRouter>
+          </AppProvider>
+        );
+
+        fireEvent.click(screen.getByText('go-new'));
+        expect(await screen.findByText(/Fresh Result/)).toBeInTheDocument();
+
+        slow.resolve({ matches: [prod('old', 'Stale Result')], related: [], hasExactMatch: true });
+        await waitFor(() => expect(searchProducts).toHaveBeenCalledWith('old', expect.anything()));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(screen.queryByText(/Stale Result/)).not.toBeInTheDocument();
+        expect(screen.getByText(/Fresh Result/)).toBeInTheDocument();
+      });
+    });
+
+    describe('filter presentation', () => {
+      it('renders no filter controls when there are no filter options and no active filter', async () => {
+        renderPage(makeMockService());
+        await screen.findByText(/no products yet/i);
+        expect(screen.queryByLabelText('Category')).not.toBeInTheDocument();
+        expect(screen.queryByRole('group', { name: 'Locations' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('group', { name: 'Tags' })).not.toBeInTheDocument();
+      });
+
+      it('renders only the groups that have options', async () => {
+        renderPage(makeMockService(), { repo: optionsRepo({ category: OPTIONS.category }) });
+        expect(await screen.findByLabelText('Category')).toBeInTheDocument();
+        expect(screen.queryByRole('group', { name: 'Locations' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('group', { name: 'Tags' })).not.toBeInTheDocument();
+      });
+
+      it('renders locations and tags as labelled groups of native, keyboard-reachable checkboxes', async () => {
+        renderPage(makeMockService(), { repo: optionsRepo() });
+        const locations = await screen.findByRole('group', { name: 'Locations' });
+        const counter = within(locations).getByLabelText('Counter');
+        expect(counter).toHaveAttribute('type', 'checkbox');
+        expect(counter).not.toBeDisabled();
+        expect(counter).not.toHaveAttribute('tabindex', '-1');
+        expect(within(screen.getByRole('group', { name: 'Tags' })).getByLabelText('popular')).toBeInTheDocument();
+      });
+
+      it('summarizes active filters by count, and Clear filters removes them all', async () => {
+        const service = makeMockService({ searchProducts: searchOf([]) });
+        renderPage(service, { repo: optionsRepo() });
+        await screen.findByLabelText('Category');
+        expect(screen.queryByText(/filters? active/i)).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'cat1' } });
+        expect(await screen.findByText('1 filter active')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByLabelText('Counter'));
+        fireEvent.click(screen.getByLabelText('popular'));
+        expect(screen.getByText('3 filters active')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+        expect(screen.queryByText(/filters? active/i)).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Category')).toHaveValue('');
+        expect(screen.getByLabelText('Counter')).not.toBeChecked();
+        expect(screen.getByLabelText('popular')).not.toBeChecked();
+      });
+
+      it('counts a URL-seeded stock filter together with the others and keeps its sentence', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([]) }), { url: '/products?stockStatus=out', repo: optionsRepo() });
+        await screen.findByLabelText('Category');
+        fireEvent.click(screen.getByLabelText('Counter'));
+
+        expect(await screen.findByText('2 filters active')).toBeInTheDocument();
+        expect(screen.getByText('Showing out-of-stock products only.')).toBeInTheDocument();
+      });
+
+      it('still shows the active summary and Clear filters for a stock filter when no filter options exist', async () => {
+        renderPage(makeMockService({ searchProducts: searchOf([]) }), { url: '/products?stockStatus=low' });
+        expect(await screen.findByText('1 filter active')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
+      });
+
+      it('on a filter-options failure: friendly message, no raw error, and browsing still works', async () => {
+        const repo = { list: vi.fn().mockRejectedValue(new Error('classification table missing')) };
+        renderPage(makeMockService({ listProducts: vi.fn().mockResolvedValue([prod('1', 'Parle-G')]) }), { repo });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          "Couldn’t load your filters. You can still browse and search."
+        );
+        expect(screen.queryByText('classification table missing')).not.toBeInTheDocument();
+        expect(await screen.findByText(/Parle-G/)).toBeInTheDocument();
+      });
     });
   });
 });

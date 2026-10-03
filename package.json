@@ -1,0 +1,12 @@
+{
+  "name": "shopstock",
+  "private": true,
+  "description": "Repository-level command orchestration only. The frontend and backend are independent packages that own their own dependencies; this file has none and does not use npm workspaces.",
+  "scripts": {
+    "verify": "npm run verify:frontend && npm run verify:backend && npm run verify:build && npm run verify:diff",
+    "verify:frontend": "npm --prefix frontend test",
+    "verify:backend": "npm --prefix backend test",
+    "verify:build": "npm --prefix frontend run build",
+    "verify:diff": "git diff --check"
+  }
+}

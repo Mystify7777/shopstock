@@ -1,0 +1,270 @@
+/*
+ * Products list (Phase 7D). Tokens only; no gradients, no decoration.
+ *
+ * The filter chips are native checkboxes: the input is visually hidden but
+ * stays focusable, and the visible pill is its following sibling, so
+ * keyboard focus, checked state and label clicks all come from the browser.
+ * "Selected" is shown by tint AND heavier weight AND a leading check mark,
+ * never by color alone. Row status is always a text label as well.
+ */
+
+/* ---------------------------------------------------------------------
+ * Header
+ * ------------------------------------------------------------------- */
+
+.product-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.product-list__header h1 {
+  margin: 0;
+}
+
+/* Primary action: a real link, styled as the page's one primary button.
+   (Scoped here; a shared button style is a 7I consistency decision.) */
+.product-list__add {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-radius: var(--radius-control);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+}
+
+.product-list__add:hover {
+  background: var(--color-primary-hover);
+  color: var(--color-on-primary);
+}
+
+.product-list__add:active {
+  background: var(--color-primary-active);
+  color: var(--color-on-primary);
+}
+
+/* ---------------------------------------------------------------------
+ * Search
+ * ------------------------------------------------------------------- */
+
+.product-list__search {
+  margin-bottom: var(--space-4);
+}
+
+.product-list__search label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.product-list__search-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.product-list__search-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------
+ * Filters
+ * ------------------------------------------------------------------- */
+
+.product-list__filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.product-list__category label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.product-list__category select {
+  max-width: 100%;
+}
+
+/* A <fieldset> keeps the native group semantics; only the default
+   heavy border/padding is reset. */
+.chip-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.chip-group legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.chip-group__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.chip__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chip__label {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-label);
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
+}
+
+.chip:hover .chip__label {
+  background: var(--color-surface-hover);
+}
+
+.chip__input:checked + .chip__label {
+  background: var(--color-selected-bg);
+  color: var(--color-selected-fg);
+  border-color: var(--color-selected-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+.chip__input:checked + .chip__label::before {
+  content: '\2713\00a0';
+}
+
+.chip__input:focus-visible + .chip__label {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.product-list__active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  font-size: var(--font-size-label);
+}
+
+.product-list__active p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------
+ * Results
+ * ------------------------------------------------------------------- */
+
+.product-list__results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.product-list__empty {
+  color: var(--color-text-secondary);
+}
+
+.product-row__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  text-decoration: none;
+  transition: background-color var(--duration-base) var(--ease-standard);
+}
+
+.product-row__link:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.product-row__link:active {
+  background: var(--color-surface-active);
+}
+
+.product-row__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.product-row__quantity {
+  font-variant-numeric: var(--font-numeric);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Status is always text. Low/out also get a tinted pill; normal is
+   plain secondary text, so rows that need attention stand out. */
+.product-row__status {
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-helper);
+  line-height: var(--line-height-compact);
+  white-space: nowrap;
+}
+
+.product-row__status--ok {
+  color: var(--color-text-secondary);
+}
+
+.product-row__status--low {
+  background: var(--color-stock-low-bg);
+  color: var(--color-stock-low-fg);
+  border-color: var(--color-stock-low-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+.product-row__status--out {
+  background: var(--color-stock-out-bg);
+  color: var(--color-stock-out-fg);
+  border-color: var(--color-stock-out-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+.product-row__chevron {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-heading-section);
+  line-height: 1;
+}
