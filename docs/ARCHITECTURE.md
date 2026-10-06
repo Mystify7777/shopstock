@@ -1068,6 +1068,47 @@ of a possible provider, not a hard dependency.
   orders by `recordedAt`, and two events recorded in the same millisecond
   tie, falling back to the random primary key. See PROGRESS.md.
 
+### Product detail (Phase 7E)
+
+- The detail page is **local-first**: it calls `productService.getProduct` and
+  `stockEventService.{getHistory, getLatestKnownCost, wouldOverRemove,
+  addStock, removeStock, reverseEvent}` over Dexie. The backend stock-event
+  endpoints only receive sync pushes; nothing on this page calls them, and no
+  backend change was needed.
+- **Server-authoritative-style state:** the product and its history are two
+  independent `useAsyncResource` loads. After any stock operation or reversal
+  both are reloaded from the services; the page keeps no second copy of
+  quantity, status or history and does not blank while reloading.
+- **Domain stays authoritative:** stock status from `classifyStockStatus`;
+  reversal eligibility from `canBeReversed`; a reversal the service refuses
+  (e.g. insufficient stock) is shown from the service's own errors. No
+  frontend-only rules.
+- **History display** (`domain/stock/historyDisplay.js`, pure): newest first
+  by stable sort on `recordedAt`, so events with the same timestamp keep the
+  service's order (no id tie-breaker is invented; the same-millisecond
+  ordering issue is unchanged). Each entry shows only real event fields:
+  amount (by `appliedQuantity` for a clamped removal), time, purchase date,
+  cost per unit or "No cost recorded", comment or "No justification
+  provided", and `Reversal` / `Reversed` from `reversalOf` / `reversedBy`.
+- **Add Stock fixes:** the latest-known-cost prefill now applies when it
+  resolves (it previously never appeared on the first open), never
+  overwrites anything the user typed (including a cleared field), and ignores
+  a result from an earlier open of the form; the purchase date is prefilled
+  with today; quantity/cost inputs use `step="any"` so decimal quantities are
+  not blocked by the browser's step validation. Native form validation stays on
+  (no `required`/`min`/`max` are set, so empty, zero and negative values still
+  reach the service, which owns domain validation).
+- **Validation** stays form-level (the service returns plain messages with no
+  field keys); the message list is linked to the inputs with
+  `aria-describedby`.
+- **Undo notice** is page-local (a global notification system is 7G): ~5 s,
+  persistent polite live region, Undo (the real `reverseEvent` path) and
+  Dismiss (hides only; reverses nothing).
+- **Deliberately deferred:** cost and margin figures (the cost projection
+  counts an ADD that was later reversed, and the margin basis is
+  unspecified), unit and classification names (a Product holds only ids),
+  and Product Change History (no repository/service read path exists).
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by

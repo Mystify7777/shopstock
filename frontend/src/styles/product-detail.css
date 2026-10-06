@@ -1,0 +1,303 @@
+/*
+ * Product detail (Phase 7E). Tokens only; no gradients, no decoration.
+ * Stock status and history direction are always conveyed in text as well
+ * (labels, +/- signs, badges), never by color alone.
+ */
+
+.product-detail__back {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+  margin-bottom: var(--space-2);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.product-detail__back:hover {
+  color: var(--color-text);
+}
+
+.product-detail__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.product-detail__header h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A navigation link that looks like the app's secondary button. */
+.product-detail__edit {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.product-detail__edit:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.product-detail__summary {
+  margin-bottom: var(--space-4);
+}
+
+.product-detail__summary p {
+  margin: 0 0 var(--space-1);
+}
+
+.product-detail__quantity {
+  font-size: var(--font-size-heading-section);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: var(--font-numeric);
+}
+
+.stock-badge {
+  display: inline-block;
+  margin-inline-start: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-helper);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-compact);
+  vertical-align: middle;
+}
+
+.stock-badge--ok {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.stock-badge--low {
+  background: var(--color-stock-low-bg);
+  color: var(--color-stock-low-fg);
+  border-color: var(--color-stock-low-border);
+}
+
+.stock-badge--out {
+  background: var(--color-stock-out-bg);
+  color: var(--color-stock-out-fg);
+  border-color: var(--color-stock-out-border);
+}
+
+/* ---------------------------------------------------------------------
+ * Actions
+ * ------------------------------------------------------------------- */
+
+.product-detail__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.product-detail__actions button {
+  flex: 1;
+}
+
+/* The open form's button reads as selected: tint + weight + border. */
+.product-detail__actions button[aria-expanded='true'] {
+  background: var(--color-selected-bg);
+  color: var(--color-selected-fg);
+  border-color: var(--color-selected-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ---------------------------------------------------------------------
+ * Undo notice (page-local). Fixed so it never shifts the page; sits above
+ * the mobile bottom bar.
+ * ------------------------------------------------------------------- */
+
+.undo-slot:empty {
+  display: none;
+}
+
+.undo-notice {
+  position: fixed;
+  inset-inline: var(--gutter);
+  bottom: calc(var(--control-height-lg) + var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-toast);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  max-width: var(--layout-width-narrow);
+  margin-inline: auto;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-3);
+}
+
+.undo-notice > span {
+  flex: 1 1 auto;
+  font-weight: var(--font-weight-medium);
+}
+
+@media (min-width: 48rem) {
+  .undo-notice {
+    bottom: var(--space-5);
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * Stock forms
+ * ------------------------------------------------------------------- */
+
+.stock-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.stock-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stock-form__field label {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.stock-form__field input {
+  width: 100%;
+}
+
+.form-errors {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-error);
+  line-height: var(--line-height-compact);
+}
+
+p.form-errors {
+  padding-left: var(--space-3);
+}
+
+.over-remove-warning {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-card);
+}
+
+.over-remove-warning p {
+  margin: 0 0 var(--space-3);
+}
+
+.over-remove-warning button + button {
+  margin-inline-start: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------
+ * History
+ * ------------------------------------------------------------------- */
+
+.product-detail__history h2 {
+  margin-bottom: var(--space-3);
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-entry {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.history-entry__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.history-entry__amount {
+  font-size: var(--font-size-heading-section);
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: var(--font-numeric);
+}
+
+.history-entry__amount--added {
+  color: var(--color-success);
+}
+
+.history-entry__amount--removed {
+  color: var(--color-danger);
+}
+
+.history-entry__kind {
+  font-weight: var(--font-weight-medium);
+}
+
+.history-entry__badge {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-info-border);
+  background: var(--color-info-bg);
+  color: var(--color-info-fg);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-helper);
+  font-weight: var(--font-weight-semibold);
+}
+
+.history-entry__badge--muted {
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.history-entry__time {
+  margin-inline-start: auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-helper);
+}
+
+.history-entry__comment {
+  margin: var(--space-1) 0;
+  overflow-wrap: anywhere;
+}
+
+.history-entry__detail {
+  margin: 0 0 var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+}
+
+.history-entry button {
+  margin-top: var(--space-2);
+  min-height: var(--control-height-sm);
+}

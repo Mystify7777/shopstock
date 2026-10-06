@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -3066,6 +3066,67 @@ be obtained the run fails fast with a clear message. Verified here: fail-fast
 without network (1 s, no tests started) and the cached path (exit 0, no lock
 or download activity). The Mongo-backed tests themselves could not be run in
 this sandbox (no access to `fastdl.mongodb.org`).
+
+### Phase 7E (#21) — Product detail / stock / history / reversal — ✅ COMPLETE (pending review)
+
+Frontend only. Backend, repositories, `stockEventService`, `productService`,
+the cost/pricing domain, reversal accounting, sync, auth and LWW are
+untouched; see ARCHITECTURE.md "Product detail (Phase 7E)". The page already
+worked (Phase 3); 7E redesigned and hardened it and fixed two real defects.
+
+**Fixed (existing defects):**
+- The **latest-known-cost prefill never appeared on the first open** of Add
+  Stock (PRD §11.1): the form read the cost from state before it had loaded.
+  Now it applies when it resolves, never over user input (including a
+  deliberately cleared field), and ignores a stale result from an earlier open.
+- The **purchase date was blank** although the service defaults to today; it
+  is now prefilled.
+- The page **blanked to "Loading…" after every stock operation**; it now
+  reloads in place.
+- Decimal quantities could be **blocked by the browser's native number
+  validation** (no `step`); inputs now use `step="any"`.
+
+**Implemented:** persistent header (Back to Products, name, Edit Product as a
+real link, stock-status text label, selling price when set); product and
+history as independent resources with loading / friendly error + detail /
+Try again (a history failure leaves the product and stock controls usable);
+newest-first history with time, purchase date, cost, comment, clamped-removal
+note and Reversal / Reversed labels; Reverse shown only where `canBeReversed`
+allows, disabled while one is in progress; one stock form open at a time with
+`aria-expanded`; form-level validation errors linked to the inputs with
+`aria-describedby`; a page-local undo notice with a persistent polite live
+region and a Dismiss button (Undo is still the real `reverseEvent`).
+Added `domain/stock/historyDisplay.js` and `styles/product-detail.css`
+(tokens only).
+
+**Deliberately deferred by decision (documented scope boundaries):** cost and
+margin (the cost projection counts an ADD that was later reversed; no margin
+basis is specified), unit and classification names (a Product holds only ids;
+no lookup layer), Product Change History (no read path exists), a global
+notification system (7G), and the accessibility sweep (7H).
+
+**Existing tests:** all 17 pre-existing `ProductDetailPage` tests pass
+unchanged.
+
+**Tests (+82; 1583 → 1665; 51 → 52 files):** history display helpers (23);
+57 new page tests (product states, loading / error / retry / not-found,
+independent history failure, no blanking on reload, the three prefill
+regressions plus date prefill, decimal input, validation linking, add and
+remove flows incl. over-removal, undo notice incl. Dismiss-is-not-a-reversal
+and the ~5 s expiry, history ordering and metadata, reversal eligibility,
+service refusal and in-progress state); token-contract coverage for the new
+CSS. Mutation-checked: prefill vs typed cost, stale prefill, Dismiss, history
+order, reversal eligibility, date prefill.
+
+**Validation (this sandbox):** frontend 52 files / 1665 tests (three
+consecutive full runs); `vite build` passes; `git diff --check` clean;
+`npm run verify` runs the frontend stage (passes) then stops at the backend
+stage's MongoDB pre-download (`403` from `fastdl.mongodb.org`, the known
+sandbox restriction), so the later stages were run individually; the
+backend's Mongo-free subset passes (75 tests / 20 suites).
+
+**Known, unrelated (not touched):** the flaky `stockEventService` history
+ordering test (same-millisecond `recordedAt` ties), documented under 7D.
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

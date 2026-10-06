@@ -15,6 +15,7 @@ const shellCss = read('shell.css');
 const dashboardCss = read('dashboard.css');
 const classificationsCss = read('classifications.css');
 const productsCss = read('products.css');
+const productDetailCss = read('product-detail.css');
 
 // Parse `--name: value;` declarations from the first :root block only
 // (later blocks are media-query overrides).
@@ -165,6 +166,7 @@ describe('tokens.css: required coverage (Issue #17)', () => {
     expect(dashboardCss).not.toMatch(/gradient\(/);
     expect(classificationsCss).not.toMatch(/gradient\(/);
     expect(productsCss).not.toMatch(/gradient\(/);
+    expect(productDetailCss).not.toMatch(/gradient\(/);
   });
 });
 
@@ -233,6 +235,7 @@ describe.each([
   ['dashboard.css', dashboardCss],
   ['classifications.css', classificationsCss],
   ['products.css', productsCss],
+  ['product-detail.css', productDetailCss],
 ])('%s', (_name, css) => {
   it('only references tokens that exist in tokens.css', () => {
     const used = [...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);
