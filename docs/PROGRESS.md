@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E, 7F complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -3127,6 +3127,51 @@ backend's Mongo-free subset passes (75 tests / 20 suites).
 
 **Known, unrelated (not touched):** the flaky `stockEventService` history
 ordering test (same-millisecond `recordedAt` ties), documented under 7D.
+
+
+### Phase 7F (#22) — Product create/edit form — ✅ COMPLETE 
+
+Frontend only. Backend, domain, services, repositories, sync, auth and LWW are
+untouched; see ARCHITECTURE.md "Product form (Phase 7F)". Scope stayed
+deliberately limited to Product `name` + `notes` (Issue #22: no new fields,
+no validation or service changes).
+
+**Fixed (existing defects):**
+- Saving an **untouched** edit still wrote: it bumped `updatedAt` and queued a
+  product sync entry.
+- Opening a **photo-only** product (name `null`) and saving produced a false
+  `null -> ""` name ProductChangeEvent.
+- Names were stored untrimmed, so surrounding whitespace counted as a tracked
+  change.
+- A raw repository exception message (e.g. the quantity-mutation error) could
+  reach the user on a failed save.
+
+**Behavior:**
+- Create submits `{ name, notes }` through `productService.createProduct()`
+  with the name trimmed.
+- Edit builds a dirty-only patch against the loaded snapshot and sends only the
+  changed fields to `updateProduct(snapshot, patch)`. An empty patch performs
+  no write, creates no ProductChangeEvent, queues no sync entry, and navigates
+  to the detail page.
+- Name comparison trims whitespace and treats null / undefined / empty /
+  whitespace-only as "no name"; missing and empty notes compare equal.
+- Create success goes to `/products/:newId`; edit success to `/products/:id`.
+  Cancel is `/products` in create mode and `/products/:id` in edit mode.
+- Edit loading uses `ResourceView` / `useAsyncResource`; a missing product uses
+  `NotFoundState`; a load failure shows a friendly message with Try again.
+- Save failures keep the entered values and show a friendly message without
+  raw exception text. Domain validation messages remain user-visible and are
+  associated with the name input.
+- The form remains a UI adapter: domain validation, change-event construction,
+  repository persistence/sync and backend LWW remain their existing
+  authorities.
+
+**Deliberately not done:** classification, pricing or photo fields, initial
+quantity, notifications (7G), the accessibility sweep (7H), a discard-confirm
+dialog.
+
+**Verification (this sandbox):** frontend 52 files / 1688 tests; `vite build`
+passes; `git diff --check` clean.
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

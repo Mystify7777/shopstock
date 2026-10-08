@@ -16,6 +16,7 @@ const dashboardCss = read('dashboard.css');
 const classificationsCss = read('classifications.css');
 const productsCss = read('products.css');
 const productDetailCss = read('product-detail.css');
+const productFormCss = read('product-form.css');
 
 // Parse `--name: value;` declarations from the first :root block only
 // (later blocks are media-query overrides).
@@ -236,6 +237,7 @@ describe.each([
   ['classifications.css', classificationsCss],
   ['products.css', productsCss],
   ['product-detail.css', productDetailCss],
+  ['product-form.css', productFormCss],
 ])('%s', (_name, css) => {
   it('only references tokens that exist in tokens.css', () => {
     const used = [...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);

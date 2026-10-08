@@ -24,6 +24,7 @@ import './styles/dashboard.css';
 import './styles/classifications.css';
 import './styles/products.css';
 import './styles/product-detail.css';
+import './styles/product-form.css';
 
 // Composition root: this is the one place application dependencies are
 // constructed and wired together. Everything below this point receives

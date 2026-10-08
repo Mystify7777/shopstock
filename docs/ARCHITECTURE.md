@@ -1109,6 +1109,52 @@ of a possible provider, not a hard dependency.
   unspecified), unit and classification names (a Product holds only ids),
   and Product Change History (no repository/service read path exists).
 
+
+### Product form (Phase 7F)
+
+- **Scope:** the form edits only Product `name` and `notes`. No other Product
+  field, photo input, classification or pricing control exists on it.
+- **Create path:** `ProductFormPage` -> `productService.createProduct` ->
+  domain factory and validation -> `productRepository.create` -> one Dexie
+  transaction (Product + SyncQueue). The form submits `{ name, notes }` with
+  the name trimmed; quantity starts at 0 and stock goes through the existing
+  stock flow.
+- **Edit path:** `ProductFormPage` -> loaded Product snapshot -> normalized
+  form values -> **dirty-only patch** -> `productService.updateProduct(snapshot,
+  patch)` -> the existing domain / service / repository path. Only fields whose
+  normalized value differs from the snapshot are sent.
+- **An empty patch is a true UI-level no-op:** no service call, no
+  ProductChangeEvent, no sync entry, no `updatedAt` change; the user is
+  returned to the product's detail page.
+- **Normalization is UI-level and narrow:** the name is trimmed, and null /
+  undefined / empty / whitespace-only all compare as "no name", so opening a
+  photo-only Product and saving untouched cannot produce a false `null -> ""`
+  change. Missing and empty notes compare equal. Nothing else is normalized,
+  and the domain's validation rules are unchanged.
+- **Authorities (unchanged):**
+
+  | Concern | Owner |
+  |---|---|
+  | Product identity and defaults | domain product factory |
+  | Product validation | domain validation |
+  | Dirty-patch construction | `ProductFormPage` |
+  | ProductChangeEvent construction | `productService` |
+  | Atomic persistence and sync entries | `productRepository` |
+  | Synced metadata conflict resolution | backend LWW |
+
+  The form is a UI adapter; it does not validate, diff for change events, or
+  touch persistence.
+- **Errors:** domain validation messages stay user-visible and are associated
+  with the name input (every error the domain can return for this form is the
+  name-or-photo identity rule). Unexpected load and save failures are
+  translated at the UI boundary into friendly messages with no raw exception
+  text; on a failed save the entered values are kept.
+- **Navigation:** create goes to the new product's detail page, edit to the
+  same product's detail page; Cancel returns to the Products list (create) or
+  the product's detail page (edit).
+- **Deferred:** the notification system (7G) and the broad accessibility pass
+  (7H). No backend, domain, service, repository, sync or auth behavior changed.
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by
