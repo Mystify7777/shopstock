@@ -55,9 +55,16 @@ function mount({ persisted = null, refresh, path = '/products/abc' } = {}) {
   };
   const authManager = createAuthManager({ sessionStore, authClient });
   const syncDrainer = { drain: vi.fn().mockResolvedValue(undefined) };
+  // The shell's sync indicator observes the queue; here: nothing to report.
+  const syncStatus = {
+    observeSyncStatus: (onChange) => {
+      onChange({ pendingCount: 0, failedCount: 0 });
+      return () => {};
+    },
+  };
 
   render(
-    <AppProvider services={{ authManager, syncDrainer }}>
+    <AppProvider services={{ authManager, syncDrainer, syncStatus }}>
       <MemoryRouter initialEntries={[path]}>
         <AuthGate>
           <AppRoutes />

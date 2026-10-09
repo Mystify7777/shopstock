@@ -17,6 +17,13 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 
 const UNDO_TOAST_DURATION_MS = 5000;
 
+// Unexpected failures are shown as these friendly messages; the underlying
+// error is logged, never rendered. Validation messages returned by the
+// service (result.errors) are unaffected and still shown as-is.
+const STOCK_SAVE_FAILED = "We couldn't save that stock change. What you entered is still here \u2014 please try again.";
+const STOCK_CHECK_FAILED = "We couldn't check the available stock. Please try again.";
+const REVERSE_FAILED = "We couldn't undo that change. Please try again.";
+
 // Presentation-only number formatting. No currency symbol: the app has no
 // currency setting (same choice as the dashboard).
 const moneyFormat = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -195,7 +202,8 @@ export default function ProductDetailPage() {
       showUndoToast(result.event.id, `Stock increased by ${result.event.appliedQuantity}`);
     } catch (err) {
       // The page and everything entered stay as they were; Save can be retried.
-      setAddSubmitError(err.message);
+      console.error('Adding stock failed.', err);
+      setAddSubmitError(STOCK_SAVE_FAILED);
       setAddSaving(false);
     }
   }
@@ -233,7 +241,8 @@ export default function ProductDetailPage() {
         return;
       }
     } catch (err) {
-      setRemoveSubmitError(err.message);
+      console.error('Checking available stock failed.', err);
+      setRemoveSubmitError(STOCK_CHECK_FAILED);
       return;
     }
 
@@ -271,7 +280,8 @@ export default function ProductDetailPage() {
       refreshAll();
       showUndoToast(result.event.id, `Stock reduced by ${result.event.appliedQuantity}`);
     } catch (err) {
-      setRemoveSubmitError(err.message);
+      console.error('Removing stock failed.', err);
+      setRemoveSubmitError(STOCK_SAVE_FAILED);
       setRemoveSaving(false);
     }
   }
@@ -294,7 +304,8 @@ export default function ProductDetailPage() {
       dismissUndoToast();
       refreshAll();
     } catch (err) {
-      setReverseSubmitError(err.message);
+      console.error('Reversing a stock event failed.', err);
+      setReverseSubmitError(REVERSE_FAILED);
     } finally {
       setReversingId(null);
     }
@@ -372,7 +383,6 @@ export default function ProductDetailPage() {
         resource={productResource}
         loadingMessage="Loading product…"
         errorMessage="Couldn't load this product."
-        showDetail
       >
         {(product) => {
           if (product === null) {
@@ -582,7 +592,6 @@ export default function ProductDetailPage() {
                   resource={historyResource}
                   loadingMessage="Loading history…"
                   errorMessage="Couldn't load the stock history."
-                  showDetail
                 >
                   {() =>
                     orderedHistory.length === 0 ? (

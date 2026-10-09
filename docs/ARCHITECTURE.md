@@ -1101,7 +1101,8 @@ of a possible provider, not a hard dependency.
 - **Validation** stays form-level (the service returns plain messages with no
   field keys); the message list is linked to the inputs with
   `aria-describedby`.
-- **Undo notice** is page-local (a global notification system is 7G): ~5 s,
+- **Undo notice** is page-local (7G chose not to add a global notification
+  system; see "Sync status and error presentation (Phase 7G)"): ~5 s,
   persistent polite live region, Undo (the real `reverseEvent` path) and
   Dismiss (hides only; reverses nothing).
 - **Deliberately deferred:** cost and margin figures (the cost projection
@@ -1154,6 +1155,104 @@ of a possible provider, not a hard dependency.
   the product's detail page (edit).
 - **Deferred:** the notification system (7G) and the broad accessibility pass
   (7H). No backend, domain, service, repository, sync or auth behavior changed.
+
+
+### Sync status and error presentation (Phase 7G)
+
+7G is an **observability** phase. The app writes locally first, so a user
+could not tell "saved on this device" from "synced". 7G makes the existing
+sync queue's state visible. It does **not** change how the queue is filled,
+drained, retried or classified (see "Phase 6 unchanged" below).
+
+**Read path (read-only; nothing here writes, drains or retries):**
+
+```
+Dexie syncQueue
+ -> syncStatusObserver      data/sync/syncStatusObserver.js (Dexie liveQuery)
+ -> AppContext.syncStatus
+ -> useSyncStatus           derives one display state
+ -> SyncStatusIndicator     rendered inside the shell's SyncStatusSlot
+```
+
+- **Observer contract:** `getSyncStatus()` / `observeSyncStatus(onChange,
+  onError)` expose exactly `{ pendingCount, failedCount }`. The UI never sees
+  queue rows, status strings, `lastError` or the queue schema.
+  - `pendingCount` = rows `pending` **plus** `processing`. A transient failure
+    leaves the claimed row `processing` until the next drain's recovery pass
+    resets it, so counting only `pending` would under-report work that still
+    has to sync.
+  - `failedCount` = rows `failed` (permanently rejected, retained by Phase 6).
+- **Display state** (one deterministic value; the slot is empty when idle):
+
+  | State | Meaning | Wording (label + sentence) |
+  |---|---|---|
+  | `offline` | the browser reports no connectivity | "Offline" ... "You appear to be offline. Changes are saved on this device and will sync later." |
+  | `unavailable` | the queue could not be read; its state is **unknown** | "Sync status unavailable" ... "Changes are still saved on this device." |
+  | `attention` | `failedCount > 0` | "Needs attention" ... "N change(s) couldn't be synced." |
+  | `pending` | `pendingCount > 0` | "Pending" ... "N change(s) waiting to sync." |
+  | `idle` | nothing waiting, nothing failed | nothing rendered |
+
+  Precedence with healthy observation: **offline > attention > pending >
+  idle**. After an observation failure: **offline > unavailable**, and
+  `unavailable` outranks attention / pending / idle.
+- **`offline` is a browser hint.** It comes from `navigator.onLine` plus the
+  window `online` / `offline` events. It does not mean the backend is
+  unreachable, and the wording says "appear".
+- **Unknown is not idle.** An observation error drops the last counts (the hook
+  reports them as `null`, never `0`), so neither an empty slot nor stale
+  numbers can be mistaken for a healthy empty queue. The `unavailable` state
+  is set only by an error and cleared only by a later real reading, never by
+  time or a browser event. In the Dexie version in use (4.4.4) a `liveQuery`
+  subscription **survives** an error: the failed reading is skipped and the
+  next queue change emits again. The design does not depend on that; were a
+  subscription ever to stay dead, the indicator would stay `unavailable`,
+  which is accurate.
+- **Presentation:** the state is always written in words (colour only
+  reinforces it); the indicator is non-interactive (no retry, no link, no
+  detail); the slot is a persistent polite live region; raw sync or
+  observation errors are logged, never rendered.
+
+**Error presentation rule.** User-facing error surfaces never render an
+arbitrary exception message. Unexpected load and save failures are translated
+at the UI boundary into friendly text, with the underlying error logged.
+Applied in 7G to the Products list (load and search) and Product detail (load,
+history, stock add / remove / over-removal check / reversal), matching what 7F,
+Classifications and Login already did. Domain validation messages returned by
+the services are unchanged and still shown. No shared error-mapping
+abstraction was introduced. `ResourceView`'s optional `showDetail` prop still
+exists but no page uses it.
+
+**Phase 6 unchanged (explicit decision).** 7G did not alter: the sync triggers
+(startup, the `online` event, login), `drain()` behavior, retry, failure
+classification, queue ordering, idempotency, retention of `failed` rows, or
+the `syncQueue` schema. It also added no notification framework, no generic
+success toasts, and no `NotificationProvider` / store / `useToast`.
+`NotificationRegion` remains an unused mount point (success feedback is
+navigation, the stock undo notice and page-local notices). The reason is
+scope: each excluded item is a change to sync lifecycle behavior or a framework
+without a second concrete consumer, not a presentation concern.
+
+**Limitations (accurate as of 7G):**
+
+- **No drain after a local mutation.** Sync runs only on startup, `online` and
+  login (a Phase 6 decision). An online, signed-in user's change can therefore
+  show as **Pending** until reload, reconnect or re-login. The indicator
+  reports this truthfully; it does not hide it or fix it.
+- **Failed entries are visible only as a count.** There is no per-entry detail,
+  no retry and no recovery. "Needs attention" tells the user something was
+  permanently rejected; it cannot resolve it. How a rejection affects later
+  entries that depend on local state is a Phase 6 matter and was not
+  characterized in 7G.
+- **Pending means "rows exist in the local queue",** not a statement about
+  server state; a claimed-but-interrupted row counts as pending.
+- **`unavailable` can outlast the fault.** After an error it persists until the
+  next queue change produces a reading.
+- **Possible second banner.** `SessionNotice` (auth state) and the sync
+  indicator can both appear when the session is `limited` and the browser is
+  offline. They report different things and were not merged.
+- **Deferred:** failed-entry recovery, a drain after mutation, and any
+  per-entry sync UI are Phase 6 follow-up decisions; the broad accessibility
+  pass is 7H and the visual consistency pass is 7I.
 
 ## Assumptions made where the spec was silent
 

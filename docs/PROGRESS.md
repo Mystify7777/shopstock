@@ -2822,7 +2822,7 @@ No implementation has started. This entry is the lock; 6E-1 begins only
 on explicit go-ahead.
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E, 7F complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E, 7F, 7G complete)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -3172,6 +3172,70 @@ dialog.
 
 **Verification (this sandbox):** frontend 52 files / 1688 tests; `vite build`
 passes; `git diff --check` clean.
+
+
+### Phase 7G (#23) — Sync / offline observability and friendly errors — ✅ COMPLETE
+
+Frontend only. 7G is an observability phase, not a sync-architecture phase:
+see ARCHITECTURE.md "Sync status and error presentation (Phase 7G)". Phase 6
+behavior is unchanged, and the backend, domain, services, repositories and
+the Dexie schema are untouched.
+
+**Problem:** writes are local-first, but the user could not distinguish local
+success from sync state. The shell's `NotificationRegion` and `SyncStatusSlot`
+were empty mount points, `syncDrainer` had no UI consumer, and `DrainResult`
+was discarded. Separately, the Products list and Product detail still showed
+raw `err.message` text in several places.
+
+**Built:**
+- A read-only `syncStatusObserver` (Dexie `liveQuery`) exposing only
+  `{ pendingCount, failedCount }`, wired as `syncStatus` through `AppContext`.
+  `pendingCount` = pending + processing (a claimed row still has to sync).
+- `useSyncStatus` (browser `online` / `offline` events plus the counts) and a
+  `SyncStatusIndicator` inside `SyncStatusSlot`, now a persistent polite live
+  region. States and wording: Offline, Sync status unavailable, Needs
+  attention, Pending; nothing when idle. Precedence offline > attention >
+  pending > idle when observation is healthy; offline > unavailable after an
+  observation failure. State is always in words; the indicator has no actions.
+- Friendly errors: raw exception text no longer reaches the Products list (load
+  and search) or Product detail (load, history, stock add / remove /
+  over-removal check / reversal). The raw error is logged. Domain validation
+  messages are unchanged. Retry and preserved input behave as before.
+
+**Correction found in review (logged, not silently rewritten):** the first
+implementation turned an observation error into "no counts", which rendered as
+idle, so a failed read looked like an empty queue. Fixed with an explicit
+`unavailable` state: counts become `null` (unknown, never 0), the state clears
+only on a real later reading, and offline still outranks it. Dexie's
+`liveQuery` was checked and keeps its subscription after an error (4.4.4); the
+design does not rely on that.
+
+**Decisions (explicitly NOT done):**
+- No notification framework / provider / store, and no generic success toasts
+  (navigation, the stock undo notice and page-local notices already cover
+  success feedback).
+- **No drain after a local mutation.** The trigger set (startup, `online`,
+  login) is a Phase 6 decision; changing it is a sync-lifecycle change, not a
+  presentation one. Consequence: an online user can see "Pending" until
+  reload, reconnect or re-login.
+- No retry or recovery for `failed` entries, no `attempts` / backoff changes,
+  no per-entry detail UI. "Needs attention" is a visible, non-interactive
+  count.
+- No 7H accessibility sweep and no 7I visual consistency pass.
+
+**Known limitations:** `offline` is a browser hint, not proof the backend is
+unreachable; `unavailable` persists until the next queue change produces a
+reading; `SessionNotice` and the sync indicator can both show when the session
+is `limited` and the browser is offline; `ResourceView`'s `showDetail` prop is
+now unused (kept, tested, additive). Effects of a permanently rejected entry on
+later dependent entries were not characterized (Phase 6).
+
+**Verification (this sandbox):** frontend 55 files / 1741 tests; `vite build`
+passes; `git diff --check` clean; changed files LF-only. Mutation checks
+covered the pending + processing count, the precedence order, the pending
+threshold, the unavailable state (not idle, cleared only by a real reading,
+below offline, above attention, no stale counts, not hidden by the indicator),
+and the removal of raw error text.
 
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
 

@@ -15,6 +15,7 @@ import { createApiClient } from './auth/apiClient.js';
 import { createSyncQueueLifecycle } from './data/sync/syncQueueLifecycle.js';
 import { createSyncEntryExecutor } from './data/sync/syncEntryExecutor.js';
 import { createSyncDrainer } from './data/sync/syncDrainer.js';
+import { createSyncStatusObserver } from './data/sync/syncStatusObserver.js';
 import { triggerStartupSync, registerConnectivitySyncTrigger } from './data/sync/syncTriggers.js';
 import { AppProvider } from './contexts/AppContext.jsx';
 import './styles/tokens.css';
@@ -85,6 +86,9 @@ const apiClient = createApiClient({ authManager, baseUrl: API_BASE_URL });
 const syncQueueLifecycle = createSyncQueueLifecycle(db);
 const syncEntryExecutor = createSyncEntryExecutor({ apiClient });
 const syncDrainer = createSyncDrainer({ syncQueueLifecycle, syncEntryExecutor });
+// Phase 7G: read-only view of the queue for the sync status indicator. It
+// observes only -- it never drains, retries or changes queue rows.
+const syncStatus = createSyncStatusObserver(db);
 
 // Phase 6D-2 — authenticated startup trigger: attempts session
 // restoration, and drains ONLY if that restoration actually establishes
@@ -118,6 +122,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         authManager,
         apiClient,
         syncDrainer,
+        syncStatus,
       }}
     >
       <App />

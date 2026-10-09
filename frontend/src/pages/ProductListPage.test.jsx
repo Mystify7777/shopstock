@@ -162,9 +162,8 @@ describe('ProductListPage', () => {
     });
     renderWithRoutes(productService);
 
-    await waitFor(() => {
-      expect(screen.getByText('database unavailable')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load your products.");
+    expect(screen.queryByText('database unavailable')).not.toBeInTheDocument();
   });
 
   it('renders a low-stock indicator for a product at or below the default threshold', async () => {
@@ -1042,11 +1041,11 @@ describe('ProductListPage', () => {
         expect(screen.getByText(/loading products/i)).toBeInTheDocument();
       });
 
-      it('on a failed load: friendly message, the underlying detail, Try again, and a Dashboard link', async () => {
+      it('on a failed load: friendly message (no raw error text), Try again, and a Dashboard link', async () => {
         renderPage(makeMockService({ listProducts: vi.fn().mockRejectedValue(new Error('database unavailable')) }));
         const alert = await screen.findByRole('alert');
         expect(alert).toHaveTextContent("Couldn't load your products.");
-        expect(screen.getByText('database unavailable')).toBeInTheDocument();
+        expect(screen.queryByText('database unavailable')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toHaveAttribute('href', '/');
         // header and search are still there
@@ -1177,7 +1176,7 @@ describe('ProductListPage', () => {
       });
 
       describe('search failure', () => {
-        it('shows a friendly message and detail, keeps the query and filters, and Try again re-runs the same search', async () => {
+        it('shows a friendly message (no raw error text), keeps the query and filters, and Try again re-runs the same search', async () => {
           const searchProducts = vi
             .fn()
             .mockRejectedValueOnce(new Error('index unavailable'))
@@ -1186,7 +1185,7 @@ describe('ProductListPage', () => {
 
           const alert = await screen.findByRole('alert');
           expect(alert).toHaveTextContent("Couldn’t run that search. Your search and filters are kept.");
-          expect(screen.getByText('index unavailable')).toBeInTheDocument();
+          expect(screen.queryByText('index unavailable')).not.toBeInTheDocument();
           expect(screen.getByLabelText('Search')).toHaveValue('parle');
           expect(screen.getByText('Showing low stock products only.')).toBeInTheDocument();
 

@@ -211,7 +211,10 @@ export default function ProductListPage() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setSearchError(err.message);
+        // The failure is shown as a friendly message; the raw error is
+        // logged, never rendered.
+        console.error('Product search failed.', err);
+        setSearchError(true);
         setSearchLoading(false);
       });
 
@@ -258,7 +261,6 @@ export default function ProductListPage() {
       return (
         <div role="alert" className="resource-error">
           <p>Couldn&rsquo;t run that search. Your search and filters are kept.</p>
-          <p>{searchError}</p>
           <button type="button" onClick={() => setSearchAttempt((n) => n + 1)}>
             Try again
           </button>
@@ -423,7 +425,6 @@ export default function ProductListPage() {
               resource={productsResource}
               loadingMessage="Loading products…"
               errorMessage="Couldn't load your products."
-              showDetail
             >
               {() =>
                 browseProducts.length === 0 ? (

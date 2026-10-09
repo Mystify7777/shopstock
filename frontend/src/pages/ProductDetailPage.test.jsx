@@ -97,7 +97,7 @@ describe('ProductDetailPage', () => {
     renderDetail(productService, stockEventService);
 
     await waitFor(() => {
-      expect(screen.getByText('product load failed')).toBeInTheDocument();
+      expect(screen.queryByText('product load failed')).not.toBeInTheDocument();
     });
   });
 
@@ -112,7 +112,7 @@ describe('ProductDetailPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Parle-G')).toBeInTheDocument(); // product still rendered
-      expect(screen.getByText('history load failed')).toBeInTheDocument();
+      expect(screen.queryByText('history load failed')).not.toBeInTheDocument();
     });
   });
 
@@ -396,9 +396,9 @@ describe('ProductDetailPage', () => {
     fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: '3' } });
     fireEvent.click(screen.getByText('Save'));
 
-    await waitFor(() => {
-      expect(screen.getByText('Product not found: p1')).toBeInTheDocument();
-    });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("We couldn't check the available stock. Please try again.");
+    expect(screen.queryByText('Product not found: p1')).not.toBeInTheDocument();
     expect(stockEventService.removeStock).not.toHaveBeenCalled();
   });
 
@@ -540,11 +540,11 @@ describe('ProductDetailPage', () => {
         expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
       });
 
-      it('on a product-load failure: friendly message, the detail, Try again, and the back link', async () => {
+      it('on a product-load failure: friendly message (no raw error text), Try again, and the back link', async () => {
         mount({ product2: { getProduct: vi.fn().mockRejectedValue(new Error('disk read failed')) } });
         const alert = await screen.findByRole('alert');
         expect(alert).toHaveTextContent("Couldn't load this product.");
-        expect(screen.getByText('disk read failed')).toBeInTheDocument();
+        expect(screen.queryByText('disk read failed')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
         expect(screen.getByRole('link', { name: /Products/ })).toBeInTheDocument();
       });
@@ -571,12 +571,12 @@ describe('ProductDetailPage', () => {
         expect(screen.getByRole('button', { name: 'Add Stock' })).toBeInTheDocument();
       });
 
-      it('a history failure leaves the product and stock controls usable, with detail and retry', async () => {
+      it('a history failure leaves the product and stock controls usable, with a friendly message and retry', async () => {
         const getHistory = vi.fn().mockRejectedValueOnce(new Error('history store down')).mockResolvedValueOnce([ev('e1', { quantity: 7, comment: 'Back again' })]);
         mount({ stock: { getHistory } });
 
-        expect(await screen.findByText('history store down')).toBeInTheDocument();
-        expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the stock history.");
+        expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the stock history.");
+        expect(screen.queryByText('history store down')).not.toBeInTheDocument();
         // product and controls unaffected
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Add Stock' }));
@@ -792,7 +792,7 @@ describe('ProductDetailPage', () => {
         });
       });
 
-      it('on an unexpected failure: keeps the page and the entered values, shows the error, and can retry', async () => {
+      it('on an unexpected failure: keeps the page and the entered values, shows a friendly error, and can retry', async () => {
         const addStock = vi
           .fn()
           .mockRejectedValueOnce(new Error('write failed'))
@@ -803,7 +803,8 @@ describe('ProductDetailPage', () => {
         fireEvent.click(screen.getByText('Save'));
 
         const alert = await screen.findByRole('alert');
-        expect(alert).toHaveTextContent('write failed');
+        expect(alert).toHaveTextContent("We couldn't save that stock change.");
+        expect(alert).not.toHaveTextContent('write failed');
         expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-describedby', alert.id);
         expect(screen.getByLabelText('Quantity')).toHaveValue(6);
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
@@ -892,8 +893,29 @@ describe('ProductDetailPage', () => {
         await openRemove();
         fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '2' } });
         fireEvent.click(screen.getByText('Save'));
-        expect(await screen.findByRole('alert')).toHaveTextContent('check failed');
+        const checkAlert = await screen.findByRole('alert');
+        expect(checkAlert).toHaveTextContent("We couldn't check the available stock.");
+        expect(checkAlert).not.toHaveTextContent('check failed');
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
+      });
+
+      it('an unexpected failure while removing stock shows a friendly message, keeps the entered values and can retry', async () => {
+        const removeStock = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('disk full'))
+          .mockResolvedValueOnce({ event: { id: 'r1', appliedQuantity: 2 }, errors: [] });
+        mount({ stock: { removeStock } });
+        await openRemove();
+        fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '2' } });
+        fireEvent.click(screen.getByText('Save'));
+
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent("We couldn't save that stock change.");
+        expect(alert).not.toHaveTextContent('disk full');
+        expect(screen.getByLabelText('Quantity')).toHaveValue(2);
+
+        fireEvent.click(screen.getByText('Save'));
+        expect(await screen.findByText('Stock reduced by 2')).toBeInTheDocument();
       });
     });
 
@@ -1130,7 +1152,8 @@ describe('ProductDetailPage', () => {
             stock: { reverseEvent: vi.fn().mockRejectedValue(new Error('reversal exploded')) }
           });
           fireEvent.click(await screen.findByRole('button', { name: 'Reverse this action' }));
-          expect(await screen.findByText('reversal exploded')).toBeInTheDocument();
+          expect(await screen.findByText("We couldn't undo that change. Please try again.")).toBeInTheDocument();
+          expect(screen.queryByText('reversal exploded')).not.toBeInTheDocument();
           expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
         });
 

@@ -16,7 +16,7 @@ const AppContext = createContext(null);
  * @param {{ children: React.ReactNode, services: object }} props
  *   services shape: { productService, stockEventService,
  *   classificationService, classificationRepository, authManager,
- *   apiClient, syncDrainer }
+ *   apiClient, syncDrainer, syncStatus }
  */
 export function AppProvider({ children, services }) {
   return (
@@ -34,6 +34,7 @@ export function AppProvider({ children, services }) {
  *   authManager: ReturnType<import('../auth/authManager.js').createAuthManager>,
  *   apiClient: ReturnType<import('../auth/apiClient.js').createApiClient>,
  *   syncDrainer: ReturnType<import('../data/sync/syncDrainer.js').createSyncDrainer>,
+ *   syncStatus: ReturnType<import('../data/sync/syncStatusObserver.js').createSyncStatusObserver>,
  * }}
  * @throws {Error} if called outside an AppProvider
  */

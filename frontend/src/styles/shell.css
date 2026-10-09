@@ -175,7 +175,48 @@
 }
 
 /* ---------------------------------------------------------------------
- * Mount points (empty until 7G): take no space while empty
+ * Sync status indicator (Phase 7G). The state is always in words (label +
+ * sentence); colour only reinforces it.
+ * ------------------------------------------------------------------- */
+
+.sync-status {
+  padding: var(--space-3) var(--gutter);
+  border-bottom: 1px solid;
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-compact);
+}
+
+.sync-status p {
+  margin: 0;
+}
+
+.sync-status--offline {
+  background: var(--color-offline-bg);
+  color: var(--color-offline-fg);
+  border-color: var(--color-offline-border);
+}
+
+.sync-status--pending {
+  background: var(--color-syncing-bg);
+  color: var(--color-syncing-fg);
+  border-color: var(--color-syncing-border);
+}
+
+/* Unknown state: deliberately neutral and restrained, not alarming. */
+.sync-status--unavailable {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.sync-status--attention {
+  background: var(--color-failed-bg);
+  color: var(--color-failed-fg);
+  border-color: var(--color-failed-border);
+}
+
+/* ---------------------------------------------------------------------
+ * Mount points: take no space while empty
  * ------------------------------------------------------------------- */
 
 .notification-region:empty,

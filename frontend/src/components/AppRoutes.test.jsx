@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import AppRoutes from './AppRoutes.jsx';
+import { AppProvider } from '../contexts/AppContext.jsx';
 import { AuthSessionProvider } from './AuthSessionContext.jsx';
 import { NAV_ITEMS } from './shell/navItems.js';
 
@@ -61,13 +62,24 @@ function NavigationControls() {
   );
 }
 
+// The shell's sync indicator observes the queue; the default here is
+// "nothing to report", so the shell frame renders as before.
+const IDLE_SYNC_STATUS = {
+  observeSyncStatus: (onChange) => {
+    onChange({ pendingCount: 0, failedCount: 0 });
+    return () => {};
+  },
+};
+
 function renderAt(entries, { index, navItems } = {}) {
   const list = Array.isArray(entries) ? entries : [entries];
   return render(
     <MemoryRouter initialEntries={list} initialIndex={index ?? list.length - 1}>
-      <AuthSessionProvider value={SESSION}>
-        <AppRoutes navItems={navItems} />
-      </AuthSessionProvider>
+      <AppProvider services={{ syncStatus: IDLE_SYNC_STATUS }}>
+        <AuthSessionProvider value={SESSION}>
+          <AppRoutes navItems={navItems} />
+        </AuthSessionProvider>
+      </AppProvider>
       <NavigationControls />
     </MemoryRouter>
   );
@@ -127,7 +139,7 @@ describe('AppRoutes composition', () => {
       );
     });
 
-    it('the mount points are empty (real content is 7G)', () => {
+    it('the mount points are empty when there is nothing to report', () => {
       const { container } = renderAt('/products');
       expect(container.querySelector('[data-shell-slot="notifications"]')).toBeEmptyDOMElement();
       expect(container.querySelector('[data-shell-slot="sync-status"]')).toBeEmptyDOMElement();

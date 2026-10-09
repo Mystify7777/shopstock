@@ -4,6 +4,7 @@ import AccountArea from './AccountArea.jsx';
 import SessionNotice from './SessionNotice.jsx';
 import NotificationRegion from './NotificationRegion.jsx';
 import SyncStatusSlot from './SyncStatusSlot.jsx';
+import SyncStatusIndicator from './SyncStatusIndicator.jsx';
 import { NAV_ITEMS, MOBILE_BAR_MIN_ITEMS } from './navItems.js';
 
 /**
@@ -33,7 +34,9 @@ export default function AppShell({ navItems = NAV_ITEMS }) {
       </header>
       <SessionNotice />
       <NotificationRegion />
-      <SyncStatusSlot />
+      <SyncStatusSlot>
+        <SyncStatusIndicator />
+      </SyncStatusSlot>
       <main className="app-shell__main">
         <Outlet />
       </main>
