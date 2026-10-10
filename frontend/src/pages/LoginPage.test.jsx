@@ -15,6 +15,22 @@ function setup(props = {}, loginImpl = vi.fn().mockResolvedValue(undefined)) {
   return { authManager, syncDrainer };
 }
 
+describe('LoginPage document title', () => {
+  it('sets a sign-in title and restores the previous title when it closes', () => {
+    document.title = 'Products \u2014 ShopStock';
+    const authManager = { login: vi.fn() };
+    const syncDrainer = { drain: vi.fn() };
+    const { unmount } = render(
+      <AppProvider services={{ authManager, syncDrainer }}>
+        <LoginPage />
+      </AppProvider>
+    );
+    expect(document.title).toBe('Sign in \u2014 ShopStock');
+    unmount();
+    expect(document.title).toBe('Products \u2014 ShopStock');
+  });
+});
+
 function fill(username, password) {
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: username } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } });

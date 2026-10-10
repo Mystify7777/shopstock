@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext.jsx';
 import { AuthApiError, AuthNetworkError } from '../auth/authClient.js';
 import { AUTH_REASON } from '../hooks/useAuthSession.js';
+import { useDocumentTitle } from '../hooks/useDocumentTitle.js';
+import { formatDocumentTitle } from '../components/shell/routeTitle.js';
 
 // Presentation only (Phase 7B). All credential handling stays in
 // authManager.login(); this page collects two fields, calls it, and turns
@@ -40,6 +42,7 @@ function describeLoginFailure(error) {
  */
 export default function LoginPage({ reason = null, onCancel }) {
   const { authManager, syncDrainer } = useAppContext();
+  useDocumentTitle(formatDocumentTitle('Sign in'));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);

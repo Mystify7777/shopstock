@@ -16,6 +16,7 @@ import { createSyncQueueLifecycle } from './data/sync/syncQueueLifecycle.js';
 import { createSyncEntryExecutor } from './data/sync/syncEntryExecutor.js';
 import { createSyncDrainer } from './data/sync/syncDrainer.js';
 import { createSyncStatusObserver } from './data/sync/syncStatusObserver.js';
+import AppErrorBoundary from './components/AppErrorBoundary.jsx';
 import { triggerStartupSync, registerConnectivitySyncTrigger } from './data/sync/syncTriggers.js';
 import { AppProvider } from './contexts/AppContext.jsx';
 import './styles/tokens.css';
@@ -113,19 +114,23 @@ registerConnectivitySyncTrigger({ syncDrainer });
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AppProvider
-      services={{
-        productService,
-        stockEventService,
-        classificationService,
-        classificationRepository,
-        authManager,
-        apiClient,
-        syncDrainer,
-        syncStatus,
-      }}
-    >
-      <App />
-    </AppProvider>
+    {/* Outermost: if the providers or the router themselves throw, the
+        fallback still renders. */}
+    <AppErrorBoundary>
+      <AppProvider
+        services={{
+          productService,
+          stockEventService,
+          classificationService,
+          classificationRepository,
+          authManager,
+          apiClient,
+          syncDrainer,
+          syncStatus,
+        }}
+      >
+        <App />
+      </AppProvider>
+    </AppErrorBoundary>
   </React.StrictMode>
 );

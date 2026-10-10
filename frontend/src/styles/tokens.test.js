@@ -18,6 +18,17 @@ const productsCss = read('products.css');
 const productDetailCss = read('product-detail.css');
 const productFormCss = read('product-form.css');
 
+// Every component stylesheet (tokens.css itself is defined separately).
+const STYLESHEETS = [
+  ['base.css', baseCss],
+  ['shell.css', shellCss],
+  ['dashboard.css', dashboardCss],
+  ['classifications.css', classificationsCss],
+  ['products.css', productsCss],
+  ['product-detail.css', productDetailCss],
+  ['product-form.css', productFormCss],
+];
+
 // Parse `--name: value;` declarations from the first :root block only
 // (later blocks are media-query overrides).
 function parseTokens(css) {
@@ -152,6 +163,31 @@ describe('tokens.css: required coverage (Issue #17)', () => {
     }
   });
 
+  // Reduced motion works by collapsing the --duration-* tokens (above). That
+  // only protects a rule that takes its duration FROM a token, so a
+  // hard-coded duration anywhere would silently opt out. Every transition and
+  // animation in the app's stylesheets must use a duration token.
+  it('every transition and animation takes its duration from a --duration-* token', () => {
+    const offenders = [];
+    for (const [file, css] of STYLESHEETS) {
+      const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const match of stripped.matchAll(/\b(transition|animation)(?:-duration)?\s*:\s*([^;}]+)/g)) {
+        const value = match[2];
+        if (/\bnone\b/.test(value)) continue;
+        if (!/var\(--duration-(fast|base|slow)\)/.test(value) || /(^|[\s,])\d*\.?\d+m?s\b/.test(value)) {
+          offenders.push(`${file}: ${match[0].trim()}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the skip link animates with the tokenized duration, so reduced motion removes the animation', () => {
+    const shell = STYLESHEETS.find(([file]) => file === 'shell.css')[1];
+    const rule = shell.match(/\.skip-link\s*\{[^}]*\}/)[0];
+    expect(rule).toMatch(/transition:[^;]*var\(--duration-base\)/);
+  });
+
   it('z-index layers are strictly ordered', () => {
     const z = ['--z-sticky', '--z-dropdown', '--z-overlay', '--z-dialog', '--z-toast'].map((n) =>
       Number(tokens[n]),
@@ -230,15 +266,7 @@ describe('tokens.css: WCAG AA contrast', () => {
   });
 });
 
-describe.each([
-  ['base.css', baseCss],
-  ['shell.css', shellCss],
-  ['dashboard.css', dashboardCss],
-  ['classifications.css', classificationsCss],
-  ['products.css', productsCss],
-  ['product-detail.css', productDetailCss],
-  ['product-form.css', productFormCss],
-])('%s', (_name, css) => {
+describe.each(STYLESHEETS)('%s', (_name, css) => {
   it('only references tokens that exist in tokens.css', () => {
     const used = [...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(0);
