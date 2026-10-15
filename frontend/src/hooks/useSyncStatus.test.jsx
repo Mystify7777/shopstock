@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { AppProvider } from '../contexts/AppContext.jsx';
+import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 import { useSyncStatus, deriveSyncState, SYNC_STATE } from './useSyncStatus.js';
 
 // A controllable syncStatus service: the test pushes counts like the real
@@ -124,7 +125,7 @@ describe('useSyncStatus', () => {
   describe('observation failure (unknown is not idle)', () => {
     it('an error before the first reading is "unavailable", with unknown (null) counts', () => {
       setBrowserOnline(true);
-      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const sync = makeSyncStatus();
       const { result } = mount(sync.service);
       expect(result.current.state).toBe('idle'); // nothing read yet, nothing failed
@@ -133,18 +134,21 @@ describe('useSyncStatus', () => {
       expect(result.current.state).toBe('unavailable');
       expect(result.current.pendingCount).toBeNull();
       expect(result.current.failedCount).toBeNull();
-      expect(consoleError).toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
     });
 
     it('an error after counts were received drops them and reports "unavailable", not idle and not stale', () => {
       setBrowserOnline(true);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const sync = makeSyncStatus();
       const { result } = mount(sync.service);
       sync.push({ pendingCount: 4, failedCount: 1 });
       expect(result.current.state).toBe('attention');
 
       sync.error(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(result.current.state).toBe('unavailable');
       expect(result.current.pendingCount).toBeNull();
       expect(result.current.failedCount).toBeNull();
@@ -152,10 +156,12 @@ describe('useSyncStatus', () => {
 
     it('stays unavailable until a real reading arrives, then resumes normal precedence', () => {
       setBrowserOnline(true);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const sync = makeSyncStatus();
       const { result } = mount(sync.service);
       sync.error(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(result.current.state).toBe('unavailable');
 
       // time passing or a browser event alone does not clear it
@@ -169,10 +175,12 @@ describe('useSyncStatus', () => {
 
     it('offline still outranks unavailable (the browser fact is still known)', () => {
       setBrowserOnline(true);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const sync = makeSyncStatus();
       const { result } = mount(sync.service);
       sync.error(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       act(() => window.dispatchEvent(new Event('offline')));
       expect(result.current.state).toBe('offline');
       act(() => window.dispatchEvent(new Event('online')));

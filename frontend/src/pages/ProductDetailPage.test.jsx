@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ProductDetailPage from './ProductDetailPage.jsx';
+import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 import { AppProvider } from '../contexts/AppContext.jsx';
 import { todayDateOnly } from '../domain/shared/dates.js';
 
@@ -381,6 +382,7 @@ describe('ProductDetailPage', () => {
   });
 
   it('a wouldOverRemove ProductNotFoundError throw surfaces as an inline error, not a silent proceed', async () => {
+    const consoleError = captureConsoleError('Checking available stock failed.');
     class ProductNotFoundError extends Error {}
     const productService = makeMockProductService({
       getProduct: vi.fn().mockResolvedValue(SAMPLE_PRODUCT)
@@ -400,6 +402,11 @@ describe('ProductDetailPage', () => {
     expect(alert).toHaveTextContent("We couldn't check the available stock. Please try again.");
     expect(screen.queryByText('Product not found: p1')).not.toBeInTheDocument();
     expect(stockEventService.removeStock).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Checking available stock failed.',
+      expect.objectContaining({ message: 'Product not found: p1' })
+    );
   });
 
   // ===========================================================================
@@ -793,6 +800,7 @@ describe('ProductDetailPage', () => {
       });
 
       it('on an unexpected failure: keeps the page and the entered values, shows a friendly error, and can retry', async () => {
+        const consoleError = captureConsoleError('Adding stock failed.');
         const addStock = vi
           .fn()
           .mockRejectedValueOnce(new Error('write failed'))
@@ -805,6 +813,11 @@ describe('ProductDetailPage', () => {
         const alert = await screen.findByRole('alert');
         expect(alert).toHaveTextContent("We couldn't save that stock change.");
         expect(alert).not.toHaveTextContent('write failed');
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledWith(
+          'Adding stock failed.',
+          expect.objectContaining({ message: 'write failed' })
+        );
         expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-describedby', alert.id);
         expect(screen.getByLabelText('Quantity')).toHaveValue(6);
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
@@ -889,6 +902,7 @@ describe('ProductDetailPage', () => {
       });
 
       it('reports a failure of the over-removal check without losing the page', async () => {
+        const consoleError = captureConsoleError('Checking available stock failed.');
         mount({ stock: { wouldOverRemove: vi.fn().mockRejectedValue(new Error('check failed')) } });
         await openRemove();
         fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '2' } });
@@ -896,10 +910,16 @@ describe('ProductDetailPage', () => {
         const checkAlert = await screen.findByRole('alert');
         expect(checkAlert).toHaveTextContent("We couldn't check the available stock.");
         expect(checkAlert).not.toHaveTextContent('check failed');
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledWith(
+          'Checking available stock failed.',
+          expect.objectContaining({ message: 'check failed' })
+        );
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
       });
 
       it('an unexpected failure while removing stock shows a friendly message, keeps the entered values and can retry', async () => {
+        const consoleError = captureConsoleError('Removing stock failed.');
         const removeStock = vi
           .fn()
           .mockRejectedValueOnce(new Error('disk full'))
@@ -912,6 +932,11 @@ describe('ProductDetailPage', () => {
         const alert = await screen.findByRole('alert');
         expect(alert).toHaveTextContent("We couldn't save that stock change.");
         expect(alert).not.toHaveTextContent('disk full');
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledWith(
+          'Removing stock failed.',
+          expect.objectContaining({ message: 'disk full' })
+        );
         expect(screen.getByLabelText('Quantity')).toHaveValue(2);
 
         fireEvent.click(screen.getByText('Save'));
@@ -1147,6 +1172,7 @@ describe('ProductDetailPage', () => {
         });
 
         it('reports an unexpected reversal failure without losing the page', async () => {
+          const consoleError = captureConsoleError('Reversing a stock event failed.');
           mount({
             history: [ev('b')],
             stock: { reverseEvent: vi.fn().mockRejectedValue(new Error('reversal exploded')) }
@@ -1154,6 +1180,11 @@ describe('ProductDetailPage', () => {
           fireEvent.click(await screen.findByRole('button', { name: 'Reverse this action' }));
           expect(await screen.findByText("We couldn't undo that change. Please try again.")).toBeInTheDocument();
           expect(screen.queryByText('reversal exploded')).not.toBeInTheDocument();
+          expect(consoleError).toHaveBeenCalledTimes(1);
+          expect(consoleError).toHaveBeenCalledWith(
+            'Reversing a stock event failed.',
+            expect.objectContaining({ message: 'reversal exploded' })
+          );
           expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
         });
 

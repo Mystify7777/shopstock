@@ -5,6 +5,7 @@ import express from 'express';
 import { createApp } from '../src/app.js';
 import { AppError } from '../src/middleware/AppError.js';
 import { errorHandler, notFoundHandler } from '../src/middleware/errorHandler.js';
+import { captureUnhandledErrorLog } from './helpers/captureUnhandledErrorLog.js';
 
 describe('GET /api/health', () => {
   test('responds 200 with status ok, no auth required', async () => {
@@ -52,26 +53,36 @@ describe('centralized error handling', () => {
     return app;
   }
 
-  test('an AppError is translated into the locked { error: { code, message } } shape with its own status', async () => {
+  test('an AppError is translated into the locked { error: { code, message } } shape with its own status', async (t) => {
+    const logged = captureUnhandledErrorLog(t);
     const app = appWithThrowingRoute(new AppError('CONFLICT', 'Already exists.'));
     const res = await request(app).get('/throws');
     assert.equal(res.status, 409);
     assert.deepEqual(res.body, { error: { code: 'CONFLICT', message: 'Already exists.' } });
+    assert.equal(logged.length, 0, 'an anticipated AppError is not an "unhandled" error and is not logged as one');
   });
 
-  test('a non-AppError exception is reported as INTERNAL_ERROR with a generic message, never leaking the real error text', async () => {
-    const app = appWithThrowingRoute(new Error('some sensitive stack-trace detail'));
+  test('a non-AppError exception is reported as INTERNAL_ERROR with a generic message, never leaking the real error text', async (t) => {
+    const logged = captureUnhandledErrorLog(t);
+    const thrown = new Error('some sensitive stack-trace detail');
+    const app = appWithThrowingRoute(thrown);
     const res = await request(app).get('/throws');
     assert.equal(res.status, 500);
     assert.equal(res.body.error.code, 'INTERNAL_ERROR');
     assert.doesNotMatch(res.body.error.message, /sensitive stack-trace detail/);
+    assert.doesNotMatch(JSON.stringify(res.body), /sensitive stack-trace detail/);
+    // The real detail goes to the server log (production diagnostic), once.
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0], thrown);
   });
 
-  test('every error response uses the exact same top-level shape: { error: { code, message } }', async () => {
+  test('every error response uses the exact same top-level shape: { error: { code, message } }', async (t) => {
+    const logged = captureUnhandledErrorLog(t);
     const app = appWithThrowingRoute(new AppError('VALIDATION_ERROR', 'Bad input.'));
     const res = await request(app).get('/throws');
     assert.deepEqual(Object.keys(res.body), ['error']);
     assert.deepEqual(Object.keys(res.body.error).sort(), ['code', 'message']);
+    assert.equal(logged.length, 0, 'an anticipated AppError is not logged as an unhandled error');
   });
 });
 

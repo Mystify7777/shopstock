@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useParams } from 'react-router-dom';
 import ProductFormPage from './ProductFormPage.jsx';
 import { AppProvider } from '../contexts/AppContext.jsx';
+import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 
 // productService is mocked here -- the real service -> repository -> Dexie
 // path is already covered by src/services/productService.test.js.
@@ -56,15 +57,6 @@ async function waitForEditForm() {
 const SAVE_FAILED = /couldn.t save this product/i;
 
 describe('ProductFormPage', () => {
-  let consoleError;
-  beforeEach(() => {
-    // Unexpected save failures are logged on purpose; keep test output clean.
-    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
-  afterEach(() => {
-    consoleError.mockRestore();
-  });
-
   // ===========================================================================
   // Create mode
   // ===========================================================================
@@ -177,6 +169,7 @@ describe('ProductFormPage', () => {
     });
 
     it('shows a friendly save failure, keeps the entered values and resets saving', async () => {
+      const consoleError = captureConsoleError('Saving the product failed.');
       const productService = makeMockService({
         createProduct: vi.fn().mockRejectedValue(new Error('offline: write failed'))
       });
@@ -197,7 +190,11 @@ describe('ProductFormPage', () => {
       expect(screen.queryByText(/Product detail:/)).not.toBeInTheDocument();
       // not shown as a validation error on the input
       expect(screen.getByLabelText(/name/i)).not.toHaveAttribute('aria-invalid');
-      expect(consoleError).toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        'Saving the product failed.',
+        expect.objectContaining({ message: 'offline: write failed' })
+      );
     });
 
     it('disables the button and shows Saving… while the save is in flight', async () => {
@@ -318,6 +315,7 @@ describe('ProductFormPage', () => {
     });
 
     it('shows a friendly save failure, keeps the entered values and resets saving', async () => {
+      const consoleError = captureConsoleError('Saving the product failed.');
       const productService = editService(existing, {
         updateProduct: vi.fn().mockRejectedValue(new Error('productRepository.update() may not modify quantity.'))
       });
@@ -331,6 +329,11 @@ describe('ProductFormPage', () => {
       const alert = await screen.findByRole('alert');
       expect(alert).toHaveTextContent(SAVE_FAILED);
       expect(screen.queryByText(/may not modify quantity/)).not.toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        'Saving the product failed.',
+        expect.objectContaining({ message: 'productRepository.update() may not modify quantity.' })
+      );
 
       expect(screen.getByLabelText(/name/i)).toHaveValue('Good Day Deluxe');
       expect(screen.getByLabelText(/notes/i)).toHaveValue('new note');

@@ -49,6 +49,7 @@ import { createApp } from '../src/app.js';
 import { signAccessToken } from '../src/services/tokenService.js';
 import { Product } from '../src/models/productModel.js';
 import { StockEvent } from '../src/models/stockEventModel.js';
+import { captureUnhandledErrorLog } from './helpers/captureUnhandledErrorLog.js';
 
 const CONFIG = { jwtAccessSecret: 'test-secret' };
 
@@ -594,7 +595,10 @@ describe('stock-events resource', () => {
   });
 
   describe('atomicity: forced mid-transaction failure', () => {
-    test('a forced failure after the StockEvent insert leaves BOTH the event count and Product.quantity completely unchanged', async () => {
+    test('a forced failure after the StockEvent insert leaves BOTH the event count and Product.quantity completely unchanged', async (t) => {
+      // The forced failure reaches the real error handler, which logs it as
+      // an unhandled error (the production diagnostic). Expected here.
+      const logged = captureUnhandledErrorLog(t);
       await seedProduct('prod-1', OWNER_A, 5);
 
       // Force a failure by making the Product update step throw, AFTER
@@ -619,6 +623,9 @@ describe('stock-events resource', () => {
         Product.updateOne = originalUpdateOne;
       }
 
+      assert.equal(logged.length, 1, 'the forced failure is logged once as an unhandled error');
+      assert.equal(logged[0].message, 'forced failure for atomicity test');
+
       const eventCount = await StockEvent.countDocuments({});
       assert.equal(eventCount, 0, 'the StockEvent insert must have been rolled back');
 
@@ -626,7 +633,8 @@ describe('stock-events resource', () => {
       assert.equal(product.quantity, 5, 'Product.quantity must be completely unchanged after rollback');
     });
 
-    test("a forced failure during reversal leaves the original event's reversedBy unpatched", async () => {
+    test("a forced failure during reversal leaves the original event's reversedBy unpatched", async (t) => {
+      const logged = captureUnhandledErrorLog(t);
       await seedProduct('prod-1', OWNER_A, 5);
 
       await request(testApp())
@@ -649,6 +657,9 @@ describe('stock-events resource', () => {
       } finally {
         StockEvent.updateOne = originalUpdateOne;
       }
+
+      assert.equal(logged.length, 1, 'the forced failure is logged once as an unhandled error');
+      assert.equal(logged[0].message, 'forced failure for reversal atomicity test');
 
       // Neither the reversal event nor the reversedBy patch nor the
       // product quantity change should have survived.

@@ -1,0 +1,6 @@
+{
+  "name": "shopstock-shared",
+  "private": true,
+  "description": "Dependency-free constants shared by the frontend and the backend test chain. This file only declares the module type for this directory so Node treats these files as ES modules without reparsing them; it adds no dependencies and is not a workspace package.",
+  "type": "module"
+}

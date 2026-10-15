@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import ProductListPage from './ProductListPage.jsx';
 import { AppProvider } from '../contexts/AppContext.jsx';
+import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 
 // These tests exercise UI behavior only. productService is mocked here --
 // the real service -> repository -> Dexie path is already covered by
@@ -1177,6 +1178,7 @@ describe('ProductListPage', () => {
 
       describe('search failure', () => {
         it('shows a friendly message (no raw error text), keeps the query and filters, and Try again re-runs the same search', async () => {
+          const consoleError = captureConsoleError('Product search failed.');
           const searchProducts = vi
             .fn()
             .mockRejectedValueOnce(new Error('index unavailable'))
@@ -1186,6 +1188,12 @@ describe('ProductListPage', () => {
           const alert = await screen.findByRole('alert');
           expect(alert).toHaveTextContent("Couldn’t run that search. Your search and filters are kept.");
           expect(screen.queryByText('index unavailable')).not.toBeInTheDocument();
+          // The raw error is for the console only: logged once, with its cause.
+          expect(consoleError).toHaveBeenCalledTimes(1);
+          expect(consoleError).toHaveBeenCalledWith(
+            'Product search failed.',
+            expect.objectContaining({ message: 'index unavailable' })
+          );
           expect(screen.getByLabelText('Search')).toHaveValue('parle');
           expect(screen.getByText('Showing low stock products only.')).toBeInTheDocument();
 

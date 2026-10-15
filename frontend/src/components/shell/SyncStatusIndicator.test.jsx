@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { AppProvider } from '../../contexts/AppContext.jsx';
+import { captureConsoleError } from '../../../tests/helpers/captureConsoleError.js';
 import SyncStatusSlot from './SyncStatusSlot.jsx';
 import SyncStatusIndicator from './SyncStatusIndicator.jsx';
 
@@ -102,48 +103,58 @@ describe('SyncStatusIndicator', () => {
 
   describe('observation failure', () => {
     it('before any reading: "Sync status unavailable", never an empty (idle) slot', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const { slot, fail } = renderIndicator();
       expect(slot()).toBeEmptyDOMElement(); // nothing read, nothing failed
       fail(new Error('idb exploded: secret detail'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(slot()).toHaveTextContent('Sync status unavailable');
       expect(slot()).toHaveTextContent('Changes are still saved on this device.');
       expect(slot().querySelector('.sync-status--unavailable')).not.toBeNull();
     });
 
     it('after counts were received: replaces them instead of leaving stale text or going idle', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const { slot, push, fail } = renderIndicator();
       push({ pendingCount: 3, failedCount: 1 });
       expect(slot()).toHaveTextContent('Needs attention');
 
       fail(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(slot()).toHaveTextContent('Sync status unavailable');
       expect(slot()).not.toHaveTextContent('Needs attention');
       expect(slot()).not.toHaveTextContent('Pending');
     });
 
     it('never renders the raw exception text and offers no action', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const { slot, fail } = renderIndicator();
       fail(new Error('idb exploded: secret detail'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(slot()).not.toHaveTextContent('idb exploded');
       expect(slot()).not.toHaveTextContent('secret detail');
       expect(slot().querySelector('button, a, input')).toBeNull();
     });
 
     it('offline outranks unavailable', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const { slot, fail } = renderIndicator({ online: false });
       fail(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(slot()).toHaveTextContent('Offline');
       expect(slot()).not.toHaveTextContent('Sync status unavailable');
     });
 
     it('a later successful reading replaces the message with the real state', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleError = captureConsoleError('Reading the sync status failed.');
       const { slot, push, fail } = renderIndicator();
       fail(new Error('idb exploded'));
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Reading the sync status failed.', expect.any(Error));
       expect(slot()).toHaveTextContent('Sync status unavailable');
 
       push({ pendingCount: 0, failedCount: 0 });
