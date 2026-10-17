@@ -129,6 +129,8 @@ export default function ProductDetailPage() {
   const removeSaveRef = useRef(null);
   const overRemoveRef = useRef(null);
   const overRemoveCancelRef = useRef(null);
+  const historyHeadingRef = useRef(null);
+  const historyReverseRefs = useRef(new Map()); // event id -> its "Reverse this action" button
   const [focusRequest, setFocusRequest] = useState(null); // { target, seq } | null
 
   function requestFocus(target) {
@@ -147,14 +149,45 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     if (!focusRequest) return;
+    const { target } = focusRequest;
+    if (target.startsWith('entry:')) {
+      // A history entry's own Reverse button (it is re-enabled by this render).
+      historyReverseRefs.current.get(target.slice('entry:'.length))?.focus();
+      return;
+    }
     const refs = {
       add: addButtonRef,
       remove: removeButtonRef,
       addSave: addSaveRef,
-      removeSave: removeSaveRef
+      removeSave: removeSaveRef,
+      history: historyHeadingRef
     };
-    refs[focusRequest.target]?.current?.focus();
+    refs[target]?.current?.focus();
   }, [focusRequest]);
+
+  // The notice is position: fixed, so on its own it covers content and any
+  // keyboard-focused control scrolled underneath it. While it is shown,
+  // publish how much of the viewport bottom it occupies (its real, wrapping
+  // height plus the bottom bar beneath it); the stylesheet turns that into
+  // scroll-padding and page padding so focus and content stay clear of it.
+  useEffect(() => {
+    const notice = undoNoticeRef.current;
+    if (!undoToast || !notice) return undefined;
+    const root = document.documentElement;
+    const update = () => {
+      const covered = Math.ceil(window.innerHeight - notice.getBoundingClientRect().top);
+      root.style.setProperty('--undo-clearance', `${Math.max(0, covered) + 8}px`);
+    };
+    update();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    observer?.observe(notice);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--undo-clearance');
+    };
+  }, [undoToast]);
 
   // The over-removal dialog opens on Cancel: the safe choice, so a
   // stray Enter or Space cannot confirm a destructive removal.
@@ -389,6 +422,17 @@ export default function ProductDetailPage() {
     if (reversingRef.current) return;
     reversingRef.current = true;
 
+    // From the history list: did the user activate this entry's own button
+    // with the keyboard (so it has focus)? That button is disabled while the
+    // reversal runs and disappears once it succeeds, so focus must be placed
+    // deliberately afterwards. See focusStillFree.
+    const historyButton = historyReverseRefs.current.get(eventId);
+    const hadHistoryFocus = !fromNotice && Boolean(historyButton) && document.activeElement === historyButton;
+    const focusStillFree = () => {
+      const active = document.activeElement;
+      return !active || active === document.body || active === historyButton;
+    };
+
     setReverseErrors((prev) => ({ ...prev, [eventId]: [] }));
     setReverseSubmitError(null);
     setReversingId(eventId);
@@ -397,16 +441,22 @@ export default function ProductDetailPage() {
       const result = await stockEventService.reverseEvent(eventId);
       if (result.errors.length > 0) {
         setReverseErrors((prev) => ({ ...prev, [eventId]: result.errors }));
+        if (hadHistoryFocus && focusStillFree()) requestFocus(`entry:${eventId}`);
         return;
       }
+      const restoreToHistory = hadHistoryFocus && focusStillFree();
       dismissUndoToast();
       refreshAll();
+      // The entry's button is gone after a successful reversal: land on the
+      // history heading (a stable point that is always there).
+      if (restoreToHistory) requestFocus('history');
       // The stock number changes silently and the notice just disappears, so
       // say what happened. (A failure is already announced by its role=alert.)
       setAnnouncement(fromNotice ? 'Stock change undone.' : 'Stock change reversed.');
     } catch (err) {
       console.error('Reversing a stock event failed.', err);
       setReverseSubmitError(REVERSE_FAILED);
+      if (hadHistoryFocus && focusStillFree()) requestFocus(`entry:${eventId}`);
     } finally {
       reversingRef.current = false;
       setReversingId(null);
@@ -460,7 +510,15 @@ export default function ProductDetailPage() {
         )}
 
         {canBeReversed(entry) && (
-          <button type="button" onClick={() => handleReverse(entry.id)} disabled={reversingId !== null}>
+          <button
+            type="button"
+            ref={(element) => {
+              if (element) historyReverseRefs.current.set(entry.id, element);
+              else historyReverseRefs.current.delete(entry.id);
+            }}
+            onClick={() => handleReverse(entry.id)}
+            disabled={reversingId !== null}
+          >
             Reverse this action
           </button>
         )}
@@ -721,7 +779,9 @@ export default function ProductDetailPage() {
               )}
 
               <section className="product-detail__history" aria-busy={historyResource.isReloading}>
-                <h2>Stock History</h2>
+                <h2 ref={historyHeadingRef} tabIndex={-1}>
+                  Stock History
+                </h2>
                 <ResourceView
                   resource={historyResource}
                   loadingMessage="Loading history…"

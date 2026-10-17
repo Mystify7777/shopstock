@@ -124,6 +124,18 @@
   display: none;
 }
 
+/* While the notice is shown, ProductDetailPage publishes --undo-clearance:
+   how much of the viewport bottom it (and the bottom bar under it) covers.
+   Keyboard focus is scrolled clear of it and the last content can scroll
+   above it. Unset (0px) whenever there is no notice. */
+html {
+  scroll-padding-bottom: var(--undo-clearance);
+}
+
+.product-detail {
+  padding-bottom: var(--undo-clearance);
+}
+
 .undo-notice {
   position: fixed;
   inset-inline: var(--gutter);

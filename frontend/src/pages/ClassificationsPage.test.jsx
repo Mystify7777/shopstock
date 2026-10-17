@@ -647,6 +647,85 @@ describe('ClassificationsPage', () => {
         expect(service.removeWithFallback).not.toHaveBeenCalled();
       });
 
+      describe('while the affected-products check is running', () => {
+        const loadingMessage = () => screen.findByText(/^Checking which products use this/);
+
+        function pendingPreview() {
+          let resolve;
+          const promise = new Promise((r) => (resolve = r));
+          return { promise, resolve: () => resolve({ classification: item(), ...preview }) };
+        }
+
+        it('focus moves to the loading message at once, never left on the Remove button that was just disabled', async () => {
+          const pending = pendingPreview();
+          const service = makeService({
+            list: vi.fn().mockResolvedValue([item()]),
+            previewRemoval: vi.fn(() => pending.promise)
+          });
+          renderPage(type, service);
+          const remove = await screen.findByRole('button', { name: 'Remove Snacks' });
+          act(() => remove.focus());
+          fireEvent.click(remove);
+
+          const message = await loadingMessage();
+          await waitFor(() => expect(message).toHaveFocus());
+          expect(message).toHaveAttribute('tabindex', '-1'); // script-only focus target, not a Tab stop
+          expect(message).toHaveAttribute('role', 'status');
+        });
+
+        it('then moves on to Cancel when the check finishes', async () => {
+          const pending = pendingPreview();
+          renderPage(
+            type,
+            makeService({ list: vi.fn().mockResolvedValue([item()]), previewRemoval: vi.fn(() => pending.promise) })
+          );
+          fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
+          await waitFor(async () => expect(await loadingMessage()).toHaveFocus());
+
+          await act(async () => pending.resolve());
+          const dialog = await screen.findByRole('dialog');
+          await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+        });
+
+        it('Escape cancels the check, removes nothing, and returns focus to the Remove button', async () => {
+          const pending = pendingPreview();
+          const service = makeService({
+            list: vi.fn().mockResolvedValue([item()]),
+            previewRemoval: vi.fn(() => pending.promise)
+          });
+          renderPage(type, service);
+          fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
+          const message = await loadingMessage();
+          await waitFor(() => expect(message).toHaveFocus());
+
+          fireEvent.keyDown(message, { key: 'Escape' });
+          expect(screen.queryByText(/^Checking which products use this/)).not.toBeInTheDocument();
+          expect(service.removeWithFallback).not.toHaveBeenCalled();
+          await waitFor(() => expect(removeButton()).toHaveFocus());
+          // A late answer for a closed dialog must not reopen it or take focus.
+          await act(async () => pending.resolve());
+          expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+          expect(removeButton()).toHaveFocus();
+        });
+
+        it('"Try again" after a failed check puts focus on the loading message, then on Cancel', async () => {
+          const pending = pendingPreview();
+          const previewRemoval = vi.fn().mockRejectedValueOnce(new Error('x')).mockImplementationOnce(() => pending.promise);
+          renderPage(type, makeService({ list: vi.fn().mockResolvedValue([item()]), previewRemoval }));
+          fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
+          const alert = await screen.findByRole('alert');
+          const tryAgain = within(alert).getByRole('button', { name: 'Try again' });
+          act(() => tryAgain.focus());
+          fireEvent.click(tryAgain);
+
+          const message = await loadingMessage();
+          await waitFor(() => expect(message).toHaveFocus());
+          await act(async () => pending.resolve());
+          const dialog = await screen.findByRole('dialog');
+          await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+        });
+      });
+
       it('after "Try again" loads the dialog, focus moves to its Cancel button', async () => {
         const previewRemoval = vi
           .fn()

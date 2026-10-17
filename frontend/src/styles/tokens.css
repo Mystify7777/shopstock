@@ -233,6 +233,12 @@
   --z-overlay: 300;
   --z-dialog: 400;
   --z-toast: 500;
+
+  /* Runtime value, not a design decision: ProductDetailPage sets it on the
+     document element while the undo notice is shown (how much of the
+     viewport bottom the fixed notice and the bottom bar cover), so keyboard
+     focus and the last content stay clear of them. Rests at 0. */
+  --undo-clearance: 0px;
 }
 
 @media (min-width: 48rem) {

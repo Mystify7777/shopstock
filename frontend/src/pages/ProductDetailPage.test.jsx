@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, within, act, cleanup } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ProductDetailPage from './ProductDetailPage.jsx';
 import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
@@ -1042,8 +1042,12 @@ describe('ProductDetailPage', () => {
       const T_ADD = { event: { id: 'new-event', appliedQuantity: 5 }, errors: [] };
       const deferred = () => {
         let resolve;
-        const promise = new Promise((r) => (resolve = r));
-        return { promise, resolve };
+        let reject;
+        const promise = new Promise((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
       };
       const noticeEl = () => document.querySelector('.undo-notice');
       const slot = () => document.querySelector('.undo-slot');
@@ -1220,6 +1224,140 @@ describe('ProductDetailPage', () => {
           });
           fireEvent.click(await screen.findByRole('button', { name: 'Reverse this action' }));
           await waitFor(() => expect(slot()).toHaveTextContent('Stock change reversed.'));
+        });
+      });
+
+      describe('reversing from the history list', () => {
+        const reverseButton = () => screen.getByRole('button', { name: 'Reverse this action' });
+        const history = () => [ev('e1', { quantity: 5, recordedAt: T1 })];
+        const historyHeading = () => screen.getByRole('heading', { level: 2, name: 'Stock History' });
+
+        it('on success the entry button is gone, so focus lands on the Stock History heading (a script-only focus target)', async () => {
+          mount({ history: history(), stock: { reverseEvent: vi.fn().mockResolvedValue({ event: { id: 'rev' }, errors: [] }) } });
+          await screen.findByRole('button', { name: 'Reverse this action' });
+          focusOn(reverseButton());
+          fireEvent.click(reverseButton());
+
+          await waitFor(() => expect(historyHeading()).toHaveFocus());
+          expect(historyHeading()).toHaveAttribute('tabindex', '-1'); // not an extra Tab stop
+          expect(slot()).toHaveTextContent('Stock change reversed.');
+        });
+
+        // Real browsers drop focus to <body> when the focused button becomes
+        // disabled (the buttons are disabled while a reversal runs); jsdom does
+        // not, so the tests reproduce it. Without this the "restore" has nothing
+        // to restore and a regression would go unnoticed. (blur() cannot do it:
+        // jsdom ignores blur() on a disabled element, so body is focused instead.)
+        const browserDropsFocusOfDisabledButton = () =>
+          act(() => {
+            document.body.tabIndex = -1;
+            document.body.focus();
+            document.body.removeAttribute('tabindex');
+          });
+
+        it('on a service error focus returns to that same entry button, which is enabled again', async () => {
+          const pending = deferred();
+          mount({ history: history(), stock: { reverseEvent: vi.fn(() => pending.promise) } });
+          await screen.findByRole('button', { name: 'Reverse this action' });
+          focusOn(reverseButton());
+          fireEvent.click(reverseButton());
+          expect(reverseButton()).toBeDisabled();
+          browserDropsFocusOfDisabledButton();
+          expect(document.body).toHaveFocus();
+
+          await act(async () =>
+            pending.resolve({ event: null, errors: ['Cannot reverse: current stock is insufficient.'] })
+          );
+          await screen.findByText('Cannot reverse: current stock is insufficient.');
+          await waitFor(() => expect(reverseButton()).toHaveFocus());
+          expect(reverseButton()).toBeEnabled();
+        });
+
+        it('on an unexpected failure focus also returns to that entry button', async () => {
+          const consoleError = captureConsoleError('Reversing a stock event failed.');
+          const pending = deferred();
+          mount({ history: history(), stock: { reverseEvent: vi.fn(() => pending.promise) } });
+          await screen.findByRole('button', { name: 'Reverse this action' });
+          focusOn(reverseButton());
+          fireEvent.click(reverseButton());
+          browserDropsFocusOfDisabledButton();
+          expect(document.body).toHaveFocus();
+
+          await act(async () => pending.reject(new Error('boom')));
+          expect(await screen.findByRole('alert')).toHaveTextContent("We couldn't undo that change.");
+          await waitFor(() => expect(reverseButton()).toHaveFocus());
+          expect(consoleError).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not steal focus the user moved elsewhere while the reversal was running', async () => {
+          const pending = deferred();
+          mount({ history: history(), stock: { reverseEvent: vi.fn(() => pending.promise) } });
+          await screen.findByRole('button', { name: 'Reverse this action' });
+          focusOn(reverseButton());
+          fireEvent.click(reverseButton());
+          const edit = screen.getByRole('link', { name: 'Edit Product' });
+          focusOn(edit);
+          await act(async () => pending.resolve({ event: { id: 'rev' }, errors: [] }));
+          await waitFor(() => expect(slot()).toHaveTextContent('Stock change reversed.'));
+          expect(edit).toHaveFocus();
+        });
+
+        it('leaves focus alone for a pointer user whose click never focused the button', async () => {
+          mount({ history: history(), stock: { reverseEvent: vi.fn().mockResolvedValue({ event: { id: 'rev' }, errors: [] }) } });
+          await screen.findByRole('button', { name: 'Reverse this action' });
+          fireEvent.click(reverseButton()); // click without focusing, as Safari does
+          await waitFor(() => expect(slot()).toHaveTextContent('Stock change reversed.'));
+          expect(document.body).toHaveFocus();
+        });
+      });
+
+      describe('keeping the fixed notice from covering content or focus', () => {
+        const property = () => document.documentElement.style.getPropertyValue('--undo-clearance');
+        let rectTop;
+        let rectSpy;
+        beforeEach(() => {
+          rectTop = 500;
+          rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+            top: rectTop, bottom: rectTop + 100, left: 0, right: 0, width: 0, height: 100, x: 0, y: rectTop, toJSON() {}
+          }));
+        });
+        afterEach(() => {
+          rectSpy.mockRestore();
+          document.documentElement.style.removeProperty('--undo-clearance');
+        });
+
+        it('publishes how much of the viewport bottom the notice covers while it is shown, and clears it afterwards', async () => {
+          expect(property()).toBe('');
+          await addWithFocusOnSave();
+          expect(property()).toBe(`${Math.ceil(window.innerHeight - 500) + 8}px`);
+
+          fireEvent.click(dismissButton());
+          expect(property()).toBe('');
+        });
+
+        it('follows a resize while the notice is shown', async () => {
+          await addWithFocusOnSave();
+          rectTop = 300;
+          act(() => {
+            window.dispatchEvent(new Event('resize'));
+          });
+          expect(property()).toBe(`${Math.ceil(window.innerHeight - 300) + 8}px`);
+        });
+
+        it('is cleared when the notice expires', async () => {
+          await withFakeTimers(async () => {
+            await addWithFocusOnSave();
+            expect(property()).not.toBe('');
+            await act(async () => vi.advanceTimersByTimeAsync(5100));
+            expect(property()).toBe('');
+          });
+        });
+
+        it('is cleared when the page unmounts with the notice still up', async () => {
+          await addWithFocusOnSave();
+          expect(property()).not.toBe('');
+          cleanup(); // unmounts the rendered page
+          expect(property()).toBe('');
         });
       });
 

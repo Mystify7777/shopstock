@@ -19,11 +19,12 @@ import { useAsyncResource } from '../hooks/useAsyncResource.js';
 // readers announce its name and description.
 //
 // Keyboard/focus (7H): the dialog is inline and NON-modal, so focus is not
-// trapped. When it appears focus moves to Cancel (the safe choice: a stray
-// Enter/Space cannot start a destructive removal); Escape cancels while
-// focus is inside it, except while a removal is running; after a failed
-// attempt focus returns to Close. Returning focus to whatever opened the
-// dialog is the host page's job (it owns that control).
+// trapped. While the affected-products check runs, focus sits on the loading
+// message; when the dialog appears it moves to Cancel (the safe choice: a
+// stray Enter/Space cannot start a destructive removal). Escape cancels
+// while focus is inside it, except while a removal is running; after a
+// failed attempt focus returns to Close. Returning focus to whatever opened
+// the dialog is the host page's job (it owns that control).
 
 const CONSEQUENCE = {
   category: 'They will become Uncategorized.',
@@ -52,6 +53,7 @@ export default function ClassificationRemoval({ config, classification, service,
   const summaryId = `remove-${classification.id}-summary`;
   const noteId = `remove-${classification.id}-note`;
   const cancelRef = useRef(null);
+  const loadingRef = useRef(null);
 
   const preview = useAsyncResource(
     () => service.previewRemoval(type, classification.id),
@@ -62,10 +64,14 @@ export default function ClassificationRemoval({ config, classification, service,
   const [failure, setFailure] = useState(null); // an unsuccessful removeWithFallback() result
   const [unexpectedError, setUnexpectedError] = useState(false);
 
-  // Focus Cancel once there is something to act on (the loaded dialog, or the
-  // load-error panel), including again after "Try again" reloads it.
+  // Focus follows the dialog through its states, so it is never left on a
+  // control that was just disabled or removed (the Remove button that opened
+  // it, or "Try again"): the loading message while the check runs, then Cancel
+  // once there is something to act on (the loaded dialog or the load-error
+  // panel). This runs again after "Try again" reloads it.
   useEffect(() => {
-    if (preview.status !== 'loading') cancelRef.current?.focus();
+    if (preview.status === 'loading') loadingRef.current?.focus();
+    else cancelRef.current?.focus();
   }, [preview.status]);
 
   // The confirm button was disabled while running, which drops focus. If the
@@ -103,7 +109,11 @@ export default function ClassificationRemoval({ config, classification, service,
   }
 
   if (preview.status === 'loading') {
-    return <p role="status">Checking which products use this {singular}&hellip;</p>;
+    return (
+      <p role="status" ref={loadingRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+        Checking which products use this {singular}&hellip;
+      </p>
+    );
   }
 
   if (preview.status === 'error') {
