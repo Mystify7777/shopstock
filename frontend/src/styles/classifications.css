@@ -64,9 +64,9 @@
   margin-inline-start: var(--space-1);
 }
 
-/* The inline confirmation (same role="alertdialog" pattern as the stock
-   over-removal warning), styled as a panel when inside this screen. */
-.classifications [role='alertdialog'] {
+/* The inline, non-modal confirmation (role="dialog", the same pattern as the
+   stock over-removal warning), styled as a panel when inside this screen. */
+.classifications [role='dialog'] {
   margin-top: var(--space-3);
   padding: var(--space-4);
   background: var(--color-surface-elevated);
@@ -75,11 +75,11 @@
   box-shadow: var(--shadow-2);
 }
 
-.classifications [role='alertdialog'] h3 {
+.classifications [role='dialog'] h3 {
   margin-top: 0;
 }
 
-.classifications [role='alertdialog'] [role='alert'] {
+.classifications [role='dialog'] [role='alert'] {
   margin: var(--space-3) 0;
   padding: var(--space-2) var(--space-3);
   background: var(--color-danger-bg);
@@ -88,10 +88,10 @@
   border-radius: var(--radius-control);
 }
 
-.classifications [role='alertdialog'] [role='alert'] p {
+.classifications [role='dialog'] [role='alert'] p {
   margin: 0 0 var(--space-2);
 }
 
-.classifications [role='alertdialog'] > button + button {
+.classifications [role='dialog'] > button + button {
   margin-inline-start: var(--space-2);
 }

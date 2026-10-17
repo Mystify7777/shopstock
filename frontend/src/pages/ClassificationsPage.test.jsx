@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppProvider } from '../contexts/AppContext.jsx';
 import ClassificationsPage from './ClassificationsPage.jsx';
@@ -239,7 +239,7 @@ describe('ClassificationsPage', () => {
 
         await waitFor(() => expect(service.archive).toHaveBeenCalledWith(type, 'c1'));
         expect(await screen.findByText('Archived “Snacks”.')).toBeInTheDocument();
-        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
         await waitFor(() => expect(service.list).toHaveBeenCalledTimes(2));
       });
 
@@ -285,7 +285,7 @@ describe('ClassificationsPage', () => {
     async function openRemoval(service) {
       renderPage(type, service);
       fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
-      return screen.findByRole('alertdialog');
+      return screen.findByRole('dialog');
     }
 
     it('shows the affected count, who is affected, the consequence, and that nothing is deleted', async () => {
@@ -333,7 +333,7 @@ describe('ClassificationsPage', () => {
       const dialog = await openRemoval(service);
       fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       expect(service.removeWithFallback).not.toHaveBeenCalled();
       expect(service.list).toHaveBeenCalledTimes(1);
       expect(screen.getByText('Snacks')).toBeInTheDocument();
@@ -359,7 +359,7 @@ describe('ClassificationsPage', () => {
 
       await waitFor(() => expect(service.removeWithFallback).toHaveBeenCalledWith(type, 'c1'));
       expect(await screen.findByText('Removed “Snacks”. 3 products were updated.')).toBeInTheDocument();
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       await waitFor(() => expect(service.list).toHaveBeenCalledTimes(2));
     });
 
@@ -431,7 +431,7 @@ describe('ClassificationsPage', () => {
 
         expect(await screen.findByText('Removed “Snacks”. 1 product was updated.')).toBeInTheDocument();
         expect(removeWithFallback).toHaveBeenCalledTimes(2);
-        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });
 
       it('Close after a failure dismisses the dialog', async () => {
@@ -442,7 +442,7 @@ describe('ClassificationsPage', () => {
         const dialog = await openRemoval(service);
         fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
         fireEvent.click(await within(dialog).findByRole('button', { name: 'Close' }));
-        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });
 
       it('explains an archive-only failure', async () => {
@@ -508,7 +508,157 @@ describe('ClassificationsPage', () => {
         expect(service.removeWithFallback).not.toHaveBeenCalled();
 
         fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
-        expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+        expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      });
+    });
+
+    // Phase 7H Slice 2. jsdom has no real Tab key, native Enter/Space
+    // activation or screen reader; those belong to the real browser pass.
+    describe('keyboard and focus', () => {
+      const preview = { affectedCount: 2, affectedProducts: [product(), product()], archivedAffectedCount: 0 };
+      const removeButton = () => screen.getByRole('button', { name: 'Remove Snacks' });
+      const partial = {
+        status: 'partial',
+        affectedCount: 2,
+        updatedCount: 1,
+        skippedCount: 0,
+        failures: [{ productId: 'p2', productName: 'Parle-G', message: 'disk full' }],
+        archiveError: null,
+        retryable: true
+      };
+
+      it('the dialog is named and described by its own text', async () => {
+        const dialog = await openRemoval(serviceWithPreview(preview));
+        expect(dialog).toHaveAccessibleName(`Remove ${singular} “Snacks”?`);
+        const described = dialog
+          .getAttribute('aria-describedby')
+          .split(' ')
+          .map((id) => document.getElementById(id)?.textContent);
+        expect(described).toHaveLength(2);
+        expect(described[0]).toMatch(/2 products use this/);
+        expect(described[1]).toMatch(/No products will be deleted/);
+      });
+
+      it('is a plain, non-modal dialog (not an alertdialog): focus is free to leave and the page behind stays interactive', async () => {
+        const dialog = await openRemoval(serviceWithPreview(preview));
+        expect(dialog).toHaveAttribute('role', 'dialog');
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(dialog).not.toHaveAttribute('aria-modal', 'true');
+        expect(dialog).toHaveAccessibleName(`Remove ${singular} “Snacks”?`);
+
+        const addInput = screen.getByLabelText(new RegExp(`^New ${singular} name`));
+        expect(addInput.closest('[aria-hidden="true"], [inert]')).toBeNull();
+        act(() => addInput.focus());
+        expect(addInput).toHaveFocus();
+        expect(screen.getByRole('dialog')).toBeInTheDocument(); // focus left; the dialog did not close
+      });
+
+      it('moves focus to Cancel (the safe choice) when the dialog appears, not to the destructive button', async () => {
+        const service = serviceWithPreview(preview);
+        const dialog = await openRemoval(service);
+        await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+        expect(within(dialog).getByRole('button', { name: `Remove ${singular}` })).not.toHaveFocus();
+        expect(service.removeWithFallback).not.toHaveBeenCalled();
+      });
+
+      it('Escape cancels without removing and returns focus to the Remove button that opened it', async () => {
+        const service = serviceWithPreview(preview);
+        const dialog = await openRemoval(service);
+        fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(service.removeWithFallback).not.toHaveBeenCalled();
+        await waitFor(() => expect(removeButton()).toHaveFocus());
+      });
+
+      it('the Cancel button returns focus to the Remove button too', async () => {
+        const dialog = await openRemoval(serviceWithPreview(preview));
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        await waitFor(() => expect(removeButton()).toHaveFocus());
+      });
+
+      it('other keys do nothing', async () => {
+        const service = serviceWithPreview(preview);
+        const dialog = await openRemoval(service);
+        for (const key of ['Enter', ' ', 'Tab', 'Backspace']) {
+          fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Cancel' }), { key });
+        }
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(service.removeWithFallback).not.toHaveBeenCalled();
+      });
+
+      it('Escape is ignored while a removal is running', async () => {
+        let finish;
+        const service = serviceWithPreview(preview, {
+          removeWithFallback: vi.fn(() => new Promise((resolve) => (finish = resolve)))
+        });
+        const dialog = await openRemoval(service);
+        fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
+        await within(dialog).findByRole('button', { name: 'Removing…' });
+
+        fireEvent.keyDown(dialog, { key: 'Escape' });
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(service.removeWithFallback).toHaveBeenCalledTimes(1);
+        await act(async () =>
+          finish({ status: 'completed', affectedCount: 2, updatedCount: 2, skippedCount: 0, failures: [], archiveError: null, retryable: false })
+        );
+      });
+
+      it('after a completed removal the Remove button is gone, so focus lands on the section heading', async () => {
+        const dialog = await openRemoval(serviceWithPreview(preview, {
+          removeWithFallback: vi.fn().mockResolvedValue({
+            status: 'completed', affectedCount: 2, updatedCount: 2, skippedCount: 0, failures: [], archiveError: null, retryable: false
+          })
+        }));
+        fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
+        await screen.findByText(/^Removed “Snacks”/);
+
+        const heading = screen.getByRole('heading', { level: 2, name: config(type).plural });
+        expect(heading).toHaveAttribute('tabindex', '-1'); // focusable by script only, not a Tab stop
+        await waitFor(() => expect(heading).toHaveFocus());
+        expect(screen.getByRole('status')).toHaveTextContent(/^Removed “Snacks”/); // still announced
+      });
+
+      it('after a failed removal focus returns to Close (the confirm button lost it while disabled)', async () => {
+        const dialog = await openRemoval(serviceWithPreview(preview, { removeWithFallback: vi.fn().mockResolvedValue(partial) }));
+        // A keyboard user Tabs from Cancel to the confirm button and activates it.
+        const confirm = within(dialog).getByRole('button', { name: `Remove ${singular}` });
+        act(() => confirm.focus());
+        fireEvent.click(confirm);
+        const close = await within(dialog).findByRole('button', { name: 'Close' });
+        await waitFor(() => expect(close).toHaveFocus());
+        expect(within(dialog).getByRole('button', { name: 'Try again' })).not.toHaveFocus();
+        // Close is still non-destructive and still returns focus to the invoker.
+        fireEvent.click(close);
+        await waitFor(() => expect(removeButton()).toHaveFocus());
+      });
+
+      it('when the check fails, focus moves to Cancel in the error panel, and Escape closes it', async () => {
+        const previewRemoval = vi.fn().mockRejectedValue(new Error('x'));
+        const service = makeService({ list: vi.fn().mockResolvedValue([item()]), previewRemoval });
+        renderPage(type, service);
+        fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
+
+        const alert = await screen.findByRole('alert');
+        await waitFor(() => expect(within(alert).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+        fireEvent.keyDown(within(alert).getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        await waitFor(() => expect(removeButton()).toHaveFocus());
+        expect(service.removeWithFallback).not.toHaveBeenCalled();
+      });
+
+      it('after "Try again" loads the dialog, focus moves to its Cancel button', async () => {
+        const previewRemoval = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('x'))
+          .mockResolvedValueOnce({ classification: item(), ...preview });
+        renderPage(type, makeService({ list: vi.fn().mockResolvedValue([item()]), previewRemoval }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
+        const alert = await screen.findByRole('alert');
+        fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+
+        const dialog = await screen.findByRole('dialog');
+        await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus());
       });
     });
   });
@@ -519,10 +669,10 @@ describe('ClassificationsPage', () => {
     });
     renderPage('category', service);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove Alpha' }));
-    await screen.findByRole('alertdialog');
+    await screen.findByRole('dialog');
     fireEvent.click(screen.getByRole('button', { name: 'Remove Bravo' }));
-    await waitFor(() => expect(screen.getAllByRole('alertdialog')).toHaveLength(1));
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('Bravo');
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Bravo');
   });
 });
 
@@ -588,7 +738,7 @@ describe('ClassificationsPage with the real service (integration)', () => {
     renderPage('category', classificationService);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove Snacks' }));
 
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('2 products use this category.')).toBeInTheDocument();
     expect(within(dialog).getByText('Parle-G')).toBeInTheDocument();
     expect(within(dialog).getByText('Good Day')).toBeInTheDocument();
@@ -611,7 +761,7 @@ describe('ClassificationsPage with the real service (integration)', () => {
 
     renderPage('location', classificationService);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove Back Room' }));
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog');
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Remove location' }));
 
     await screen.findByText('Removed “Back Room”. 1 product was updated.');

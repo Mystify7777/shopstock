@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
 import { useAsyncResource } from '../hooks/useAsyncResource.js';
@@ -23,6 +23,12 @@ import { CLASSIFICATION_TYPES, classificationPath } from '../components/classifi
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
 
+// Keyboard/focus (7H): when the Remove dialog closes, focus goes back to the
+// Remove button that opened it. After a completed removal that button no
+// longer exists (the item is archived), so focus goes to the section heading
+// instead -- a stable, always-present landing point that does not open a
+// mobile keyboard. The result itself is announced by the role="status" notice.
+
 export default function ClassificationsPage({ type }) {
   const config = CLASSIFICATION_TYPES.find((entry) => entry.type === type);
   const { classificationService } = useAppContext();
@@ -41,6 +47,29 @@ export default function ClassificationsPage({ type }) {
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [notice, setNotice] = useState(null);
+
+  const removeButtonRefs = useRef(new Map()); // item id -> its Remove button
+  const headingRef = useRef(null);
+  const [focusRequest, setFocusRequest] = useState(null); // { itemId | null, seq }
+
+  function requestFocus(itemId) {
+    setFocusRequest((previous) => ({ itemId, seq: (previous?.seq ?? 0) + 1 }));
+  }
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const button = focusRequest.itemId ? removeButtonRefs.current.get(focusRequest.itemId) : null;
+    if (button && !button.disabled) {
+      button.focus();
+    } else {
+      headingRef.current?.focus();
+    }
+  }, [focusRequest]);
+
+  function closeRemoval(item) {
+    setRemovingId(null);
+    requestFocus(item.id);
+  }
 
   // Runs a service call that returns { classification, errors }. Returns
   // true when it succeeded (no validation errors, nothing thrown).
@@ -108,6 +137,7 @@ export default function ClassificationsPage({ type }) {
 
   function handleRemoved(item, result) {
     setRemovingId(null);
+    requestFocus(null); // the item is gone; land on the heading
     list.reload();
     setNotice(
       result.updatedCount > 0
@@ -166,7 +196,9 @@ export default function ClassificationsPage({ type }) {
           return (
             <>
               <section aria-labelledby="classifications-active-heading">
-                <h2 id="classifications-active-heading">{config.plural}</h2>
+                <h2 id="classifications-active-heading" ref={headingRef} tabIndex={-1}>
+                  {config.plural}
+                </h2>
                 {active.length === 0 ? (
                   <p>No {config.plural.toLowerCase()} yet. Add one above.</p>
                 ) : (
@@ -213,6 +245,10 @@ export default function ClassificationsPage({ type }) {
                             {config.removable && (
                               <button
                                 type="button"
+                                ref={(element) => {
+                                  if (element) removeButtonRefs.current.set(item.id, element);
+                                  else removeButtonRefs.current.delete(item.id);
+                                }}
                                 onClick={() => {
                                   setNotice(null);
                                   setRemovingId(item.id);
@@ -230,7 +266,7 @@ export default function ClassificationsPage({ type }) {
                             config={config}
                             classification={item}
                             service={classificationService}
-                            onCancel={() => setRemovingId(null)}
+                            onCancel={() => closeRemoval(item)}
                             onRemoved={(result) => handleRemoved(item, result)}
                           />
                         )}

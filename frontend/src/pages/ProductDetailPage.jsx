@@ -53,6 +53,13 @@ const costFormat = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, ma
  *  - The undo notice is page-local (a global notification system is 7G),
  *    still ~5 s, still the real reverseEvent path, now with a Dismiss button
  *    and a persistent polite live region.
+ *  - Undo/dialog accessibility (7H Slice 2): the ~5 s expiry is paused while
+ *    the pointer is over the notice or focus is inside it, then restarts in
+ *    full; the notice never takes focus when it appears; focus is only moved
+ *    when the element that HAD it is removed (Save, Dismiss, a successful
+ *    Undo, the over-removal dialog), and then back to the control the user
+ *    invoked; the over-removal dialog is named, focuses its safe
+ *    (Cancel) button, and closes on Escape.
  *
  * Deliberately not shown (deferred by decision): cost and margin figures,
  * unit and classification names (a Product holds only ids), and Product
@@ -105,36 +112,94 @@ export default function ProductDetailPage() {
 
   // Undo notice (page-local)
   const [undoToast, setUndoToast] = useState(null); // { eventId, message } | null
-  const undoTimerRef = useRef(null);
+  const [undoInteraction, setUndoInteraction] = useState({ hover: false, focus: false });
+  const [announcement, setAnnouncement] = useState(null); // transient, screen-reader-only
+  const undoNoticeRef = useRef(null);
+  const undoOriginRef = useRef('add'); // which action button the notice came from
+  const reversingRef = useRef(false); // synchronous guard: one reversal at a time
+
+  // Focus management. Refs for the controls focus can be returned to, and a
+  // request object an effect acts on AFTER the render that made the target
+  // focusable (e.g. a Save button that was disabled while saving).
+  const addButtonRef = useRef(null);
+  const removeButtonRef = useRef(null);
+  const addFormRef = useRef(null);
+  const removeFormRef = useRef(null);
+  const addSaveRef = useRef(null);
+  const removeSaveRef = useRef(null);
+  const overRemoveRef = useRef(null);
+  const overRemoveCancelRef = useRef(null);
+  const [focusRequest, setFocusRequest] = useState(null); // { target, seq } | null
+
+  function requestFocus(target) {
+    setFocusRequest((previous) => ({ target, seq: (previous?.seq ?? 0) + 1 }));
+  }
+
+  // True only when the user had focus inside `containerRef` when the action
+  // started AND focus is still there (or was dropped to <body> because the
+  // focused element was removed or disabled). Never steals focus the user
+  // deliberately moved elsewhere while an async operation was running.
+  function canRestoreFocus(hadFocus, containerRef) {
+    if (!hadFocus) return false;
+    const active = document.activeElement;
+    return !active || active === document.body || Boolean(containerRef.current?.contains(active));
+  }
 
   useEffect(() => {
-    return () => {
-      if (undoTimerRef.current) {
-        clearTimeout(undoTimerRef.current);
-      }
+    if (!focusRequest) return;
+    const refs = {
+      add: addButtonRef,
+      remove: removeButtonRef,
+      addSave: addSaveRef,
+      removeSave: removeSaveRef
     };
-  }, []);
+    refs[focusRequest.target]?.current?.focus();
+  }, [focusRequest]);
+
+  // The over-removal dialog opens on Cancel: the safe choice, so a
+  // stray Enter or Space cannot confirm a destructive removal.
+  useEffect(() => {
+    if (overRemoveWarning) overRemoveCancelRef.current?.focus();
+  }, [overRemoveWarning]);
+
+  // Expiry: runs only while nothing is interacting with the notice and no
+  // reversal is in flight. Leaving the notice restarts the FULL duration.
+  const undoPaused = undoInteraction.hover || undoInteraction.focus || reversingId !== null;
+  useEffect(() => {
+    if (!undoToast || undoPaused) return undefined;
+    const timer = setTimeout(() => setUndoToast(null), UNDO_TOAST_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [undoToast, undoPaused]);
+
+  // A removed notice cannot send mouseleave/blur, so reset what it tracked.
+  useEffect(() => {
+    if (!undoToast) setUndoInteraction({ hover: false, focus: false });
+  }, [undoToast]);
+
+  // The spoken confirmation of a reversal is transient.
+  useEffect(() => {
+    if (!announcement) return undefined;
+    const timer = setTimeout(() => setAnnouncement(null), UNDO_TOAST_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [announcement]);
 
   function refreshAll() {
     productResource.reload();
     historyResource.reload();
   }
 
-  function showUndoToast(eventId, message) {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-    }
+  function showUndoToast(eventId, message, origin) {
+    undoOriginRef.current = origin;
+    setAnnouncement(null);
+    // A new object every time, so a second change restarts the expiry.
     setUndoToast({ eventId, message });
-    undoTimerRef.current = setTimeout(() => {
-      setUndoToast(null);
-      undoTimerRef.current = null;
-    }, UNDO_TOAST_DURATION_MS);
   }
 
+  // Dismiss only closes the notice. If focus was inside it, that element is
+  // about to disappear, so focus goes back to the action the user invoked.
   function dismissUndoToast() {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = null;
+    if (undoNoticeRef.current?.contains(document.activeElement)) {
+      requestFocus(undoOriginRef.current);
     }
     setUndoToast(null);
   }
@@ -177,6 +242,7 @@ export default function ProductDetailPage() {
 
   async function handleAddSubmit(event) {
     event.preventDefault();
+    const hadFocus = Boolean(addFormRef.current?.contains(document.activeElement));
     setAddSaving(true);
     setAddErrors([]);
     setAddSubmitError(null);
@@ -193,18 +259,24 @@ export default function ProductDetailPage() {
       if (result.errors.length > 0) {
         setAddErrors(result.errors);
         setAddSaving(false);
+        if (canRestoreFocus(hadFocus, addFormRef)) requestFocus('addSave');
         return;
       }
 
+      const restore = canRestoreFocus(hadFocus, addFormRef);
       setAddSaving(false);
       closeAddForm();
       refreshAll();
-      showUndoToast(result.event.id, `Stock increased by ${result.event.appliedQuantity}`);
+      showUndoToast(result.event.id, `Stock increased by ${result.event.appliedQuantity}`, 'add');
+      // The form (and the Save button that had focus) is gone: return focus
+      // to Add Stock, so Remove Stock and then Undo are the next Tab stops.
+      if (restore) requestFocus('add');
     } catch (err) {
       // The page and everything entered stay as they were; Save can be retried.
       console.error('Adding stock failed.', err);
       setAddSubmitError(STOCK_SAVE_FAILED);
       setAddSaving(false);
+      if (canRestoreFocus(hadFocus, addFormRef)) requestFocus('addSave');
     }
   }
 
@@ -233,6 +305,7 @@ export default function ProductDetailPage() {
     setRemoveSubmitError(null);
 
     const quantity = Number(removeQuantity);
+    const hadFocus = Boolean(removeFormRef.current?.contains(document.activeElement));
 
     try {
       const wouldOverRemove = await stockEventService.wouldOverRemove(id, quantity);
@@ -246,21 +319,37 @@ export default function ProductDetailPage() {
       return;
     }
 
-    await commitRemoval(quantity, removeComment);
+    await commitRemoval(quantity, removeComment, hadFocus);
   }
 
   async function handleConfirmOverRemove() {
     if (!overRemoveWarning) return;
     const { quantity, comment } = overRemoveWarning;
+    const hadFocus = Boolean(overRemoveRef.current?.contains(document.activeElement));
     setOverRemoveWarning(null);
-    await commitRemoval(quantity, comment);
+    await commitRemoval(quantity, comment, hadFocus);
   }
 
+  // Cancel (button or Escape) closes the dialog and returns focus to Save,
+  // the control that opened it; the form and what was typed are untouched.
   function handleCancelOverRemove() {
     setOverRemoveWarning(null);
+    requestFocus('removeSave');
   }
 
-  async function commitRemoval(quantity, comment) {
+  // Escape closes the dialog only while focus is inside it, and is consumed
+  // so it cannot also trigger anything behind it.
+  function handleOverRemoveKeyDown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      handleCancelOverRemove();
+    }
+  }
+
+  // `hadFocus`: focus was inside the remove form or the over-removal dialog
+  // when the user started this action (see canRestoreFocus).
+  async function commitRemoval(quantity, comment, hadFocus = false) {
     setRemoveSaving(true);
     try {
       const result = await stockEventService.removeStock({
@@ -272,17 +361,21 @@ export default function ProductDetailPage() {
       if (result.errors.length > 0) {
         setRemoveErrors(result.errors);
         setRemoveSaving(false);
+        if (canRestoreFocus(hadFocus, removeFormRef)) requestFocus('removeSave');
         return;
       }
 
+      const restore = canRestoreFocus(hadFocus, removeFormRef);
       setRemoveSaving(false);
       setShowRemoveForm(false);
       refreshAll();
-      showUndoToast(result.event.id, `Stock reduced by ${result.event.appliedQuantity}`);
+      showUndoToast(result.event.id, `Stock reduced by ${result.event.appliedQuantity}`, 'remove');
+      if (restore) requestFocus('remove');
     } catch (err) {
       console.error('Removing stock failed.', err);
       setRemoveSubmitError(STOCK_SAVE_FAILED);
       setRemoveSaving(false);
+      if (canRestoreFocus(hadFocus, removeFormRef)) requestFocus('removeSave');
     }
   }
 
@@ -290,7 +383,12 @@ export default function ProductDetailPage() {
   // Reversal (undo notice button AND per-history-entry "Reverse this action")
   // ---------------------------------------------------------------------------
 
-  async function handleReverse(eventId) {
+  async function handleReverse(eventId, { fromNotice = false } = {}) {
+    // Synchronous guard: state-based `disabled` only takes effect after a
+    // render, so it alone cannot promise exactly one reversal per activation.
+    if (reversingRef.current) return;
+    reversingRef.current = true;
+
     setReverseErrors((prev) => ({ ...prev, [eventId]: [] }));
     setReverseSubmitError(null);
     setReversingId(eventId);
@@ -303,10 +401,14 @@ export default function ProductDetailPage() {
       }
       dismissUndoToast();
       refreshAll();
+      // The stock number changes silently and the notice just disappears, so
+      // say what happened. (A failure is already announced by its role=alert.)
+      setAnnouncement(fromNotice ? 'Stock change undone.' : 'Stock change reversed.');
     } catch (err) {
       console.error('Reversing a stock event failed.', err);
       setReverseSubmitError(REVERSE_FAILED);
     } finally {
+      reversingRef.current = false;
       setReversingId(null);
     }
   }
@@ -429,6 +531,7 @@ export default function ProductDetailPage() {
 
               <div className="product-detail__actions">
                 <button
+                  ref={addButtonRef}
                   type="button"
                   onClick={showAddForm ? closeAddForm : openAddForm}
                   aria-expanded={showAddForm}
@@ -437,6 +540,7 @@ export default function ProductDetailPage() {
                   Add Stock
                 </button>
                 <button
+                  ref={removeButtonRef}
                   type="button"
                   onClick={showRemoveForm ? closeRemoveForm : openRemoveForm}
                   aria-expanded={showRemoveForm}
@@ -448,22 +552,40 @@ export default function ProductDetailPage() {
 
               {/* Persistent polite live region: its content changes, the region does not. */}
               <div className="undo-slot" role="status" aria-live="polite">
-                {undoToast && (
-                  <div className="undo-notice">
+                {undoToast ? (
+                  <div
+                    className="undo-notice"
+                    ref={undoNoticeRef}
+                    onMouseEnter={() => setUndoInteraction((prev) => ({ ...prev, hover: true }))}
+                    onMouseLeave={() => setUndoInteraction((prev) => ({ ...prev, hover: false }))}
+                    onFocus={() => setUndoInteraction((prev) => ({ ...prev, focus: true }))}
+                    // Moving Undo -> Dismiss fires blur then focus; the second
+                    // event re-pauses before the expiry timer can start.
+                    onBlur={() => setUndoInteraction((prev) => ({ ...prev, focus: false }))}
+                  >
                     <span>{undoToast.message}</span>
-                    <button type="button" onClick={() => handleReverse(undoToast.eventId)} disabled={reversingId !== null}>
+                    {/* aria-disabled, not disabled, while reversing: a disabled
+                        button loses keyboard focus in some browsers. The
+                        reversal guard lives in handleReverse. */}
+                    <button
+                      type="button"
+                      aria-disabled={reversingId !== null ? 'true' : undefined}
+                      onClick={() => handleReverse(undoToast.eventId, { fromNotice: true })}
+                    >
                       Undo
                     </button>
                     <button type="button" onClick={dismissUndoToast}>
                       Dismiss
                     </button>
                   </div>
+                ) : (
+                  announcement && <span className="visually-hidden">{announcement}</span>
                 )}
               </div>
               {reverseSubmitError && <p role="alert">{reverseSubmitError}</p>}
 
               {showAddForm && (
-                <form id="add-stock-form" className="stock-form" onSubmit={handleAddSubmit}>
+                <form id="add-stock-form" ref={addFormRef} className="stock-form" onSubmit={handleAddSubmit}>
                   {addErrors.length > 0 && (
                     <ul role="alert" id="add-form-errors" className="form-errors">
                       {addErrors.map((message) => (
@@ -523,14 +645,14 @@ export default function ProductDetailPage() {
                       onChange={(e) => setAddComment(e.target.value)}
                     />
                   </div>
-                  <button type="submit" disabled={addSaving}>
+                  <button ref={addSaveRef} type="submit" disabled={addSaving}>
                     {addSaving ? 'Saving…' : 'Save'}
                   </button>
                 </form>
               )}
 
               {showRemoveForm && (
-                <form id="remove-stock-form" className="stock-form" onSubmit={handleRemoveSubmit}>
+                <form id="remove-stock-form" ref={removeFormRef} className="stock-form" onSubmit={handleRemoveSubmit}>
                   {removeErrors.length > 0 && (
                     <ul role="alert" id="remove-form-errors" className="form-errors">
                       {removeErrors.map((message) => (
@@ -565,19 +687,31 @@ export default function ProductDetailPage() {
                       onChange={(e) => setRemoveComment(e.target.value)}
                     />
                   </div>
-                  <button type="submit" disabled={removeSaving}>
+                  <button ref={removeSaveRef} type="submit" disabled={removeSaving}>
                     {removeSaving ? 'Saving…' : 'Save'}
                   </button>
                 </form>
               )}
 
               {overRemoveWarning && (
-                <div role="alertdialog" className="over-remove-warning">
-                  <p>
+                // role="dialog", not "alertdialog": inline and non-modal. The page
+                // behind stays visible and reachable, so focus is NOT trapped and
+                // aria-modal is not set. It is named, described, takes focus on
+                // Cancel when it opens (which is what makes screen readers announce
+                // it) and closes on Escape while focus is inside it.
+                <div
+                  role="dialog"
+                  className="over-remove-warning"
+                  ref={overRemoveRef}
+                  aria-label="Remove more than the available stock?"
+                  aria-describedby="over-remove-message"
+                  onKeyDown={handleOverRemoveKeyDown}
+                >
+                  <p id="over-remove-message">
                     Only {product.quantity} units are currently available. Remove{' '}
                     {overRemoveWarning.quantity} anyway?
                   </p>
-                  <button type="button" onClick={handleCancelOverRemove}>
+                  <button ref={overRemoveCancelRef} type="button" onClick={handleCancelOverRemove}>
                     Cancel
                   </button>
                   <button type="button" onClick={handleConfirmOverRemove}>

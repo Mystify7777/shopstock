@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAsyncResource } from '../hooks/useAsyncResource.js';
 
 // Confirmation + execution of "Remove" for a category, location or tag
-// (Phase 7C). Uses the app's existing inline role="alertdialog" pattern.
+// (Phase 7C). Uses the app's inline, non-modal role="dialog" pattern.
 //
 // Flow: show who is affected and what will happen -> explicit confirm ->
 // classificationService.removeWithFallback() -> honest outcome.
@@ -11,6 +11,19 @@ import { useAsyncResource } from '../hooks/useAsyncResource.js';
 // fails partway this component says so plainly, nothing is hidden, and
 // "Try again" simply runs the removal again (products already updated are
 // not touched twice).
+//
+// Semantics (7H): role="dialog", not "alertdialog". An alertdialog is a
+// modal interruption that demands an immediate response; this one is inline,
+// non-modal and leaves the page behind it interactive, so a plain dialog is
+// the honest role. Focus moving into it on open (below) is what makes screen
+// readers announce its name and description.
+//
+// Keyboard/focus (7H): the dialog is inline and NON-modal, so focus is not
+// trapped. When it appears focus moves to Cancel (the safe choice: a stray
+// Enter/Space cannot start a destructive removal); Escape cancels while
+// focus is inside it, except while a removal is running; after a failed
+// attempt focus returns to Close. Returning focus to whatever opened the
+// dialog is the host page's job (it owns that control).
 
 const CONSEQUENCE = {
   category: 'They will become Uncategorized.',
@@ -36,6 +49,9 @@ function countProducts(n) {
 export default function ClassificationRemoval({ config, classification, service, onCancel, onRemoved }) {
   const { type, singular } = config;
   const headingId = `remove-${classification.id}-heading`;
+  const summaryId = `remove-${classification.id}-summary`;
+  const noteId = `remove-${classification.id}-note`;
+  const cancelRef = useRef(null);
 
   const preview = useAsyncResource(
     () => service.previewRemoval(type, classification.id),
@@ -45,6 +61,28 @@ export default function ClassificationRemoval({ config, classification, service,
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState(null); // an unsuccessful removeWithFallback() result
   const [unexpectedError, setUnexpectedError] = useState(false);
+
+  // Focus Cancel once there is something to act on (the loaded dialog, or the
+  // load-error panel), including again after "Try again" reloads it.
+  useEffect(() => {
+    if (preview.status !== 'loading') cancelRef.current?.focus();
+  }, [preview.status]);
+
+  // The confirm button was disabled while running, which drops focus. If the
+  // attempt failed (the component is still mounted), put focus on Close.
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    if (wasRunningRef.current && !running) cancelRef.current?.focus();
+    wasRunningRef.current = running;
+  }, [running]);
+
+  function handleKeyDown(event) {
+    if (event.key === 'Escape' && !running) {
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    }
+  }
 
   async function handleConfirm() {
     setRunning(true);
@@ -70,12 +108,12 @@ export default function ClassificationRemoval({ config, classification, service,
 
   if (preview.status === 'error') {
     return (
-      <div role="alert">
+      <div role="alert" onKeyDown={handleKeyDown}>
         <p>Couldn&rsquo;t check which products use this {singular}. Nothing was changed.</p>
         <button type="button" onClick={preview.reload}>
           Try again
         </button>
-        <button type="button" onClick={onCancel}>
+        <button ref={cancelRef} type="button" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -85,12 +123,17 @@ export default function ClassificationRemoval({ config, classification, service,
   const { affectedCount, affectedProducts, archivedAffectedCount } = preview.data;
 
   return (
-    <div role="alertdialog" aria-labelledby={headingId}>
+    <div
+      role="dialog"
+      aria-labelledby={headingId}
+      aria-describedby={`${summaryId} ${noteId}`}
+      onKeyDown={handleKeyDown}
+    >
       <h3 id={headingId}>
         Remove {singular} &ldquo;{classification.name}&rdquo;?
       </h3>
 
-      <p>
+      <p id={summaryId}>
         {affectedCount === 0
           ? `No products use this ${singular}.`
           : `${countProducts(affectedCount)} ${affectedCount === 1 ? 'uses' : 'use'} this ${singular}${
@@ -114,7 +157,7 @@ export default function ClassificationRemoval({ config, classification, service,
         </>
       )}
 
-      <p>
+      <p id={noteId}>
         No products will be deleted. The {singular} itself will be archived, and you can restore it
         later.
       </p>
@@ -151,7 +194,7 @@ export default function ClassificationRemoval({ config, classification, service,
         </div>
       )}
 
-      <button type="button" onClick={onCancel} disabled={running}>
+      <button ref={cancelRef} type="button" onClick={onCancel} disabled={running}>
         {failure || unexpectedError ? 'Close' : 'Cancel'}
       </button>
       <button type="button" onClick={handleConfirm} disabled={running}>

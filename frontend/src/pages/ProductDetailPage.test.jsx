@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ProductDetailPage from './ProductDetailPage.jsx';
 import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
@@ -246,7 +246,7 @@ describe('ProductDetailPage', () => {
         expect.objectContaining({ productId: 'p1', quantity: 3 })
       );
     });
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('Remove Stock over-removal shows Cancel/Continue and does NOT call removeStock until Continue', async () => {
@@ -268,7 +268,7 @@ describe('ProductDetailPage', () => {
     fireEvent.click(screen.getByText('Save'));
 
     await waitFor(() => {
-      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
     expect(stockEventService.removeStock).not.toHaveBeenCalled();
 
@@ -296,11 +296,11 @@ describe('ProductDetailPage', () => {
     fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: '15' } });
     fireEvent.click(screen.getByText('Save'));
 
-    await waitFor(() => screen.getByRole('alertdialog'));
+    await waitFor(() => screen.getByRole('dialog'));
     fireEvent.click(screen.getByText('Cancel'));
 
     await waitFor(() => {
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
     expect(stockEventService.removeStock).not.toHaveBeenCalled();
   });
@@ -867,10 +867,10 @@ describe('ProductDetailPage', () => {
         fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '25' } });
         fireEvent.click(screen.getByText('Save'));
 
-        const dialog = await screen.findByRole('alertdialog');
+        const dialog = await screen.findByRole('dialog');
         expect(dialog).toHaveTextContent('Only 10 units are currently available. Remove 25 anyway?');
         fireEvent.click(screen.getByText('Cancel'));
-        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
         expect(stockEventService.removeStock).not.toHaveBeenCalled();
         expect(screen.getByLabelText('Quantity')).toHaveValue(25);
       });
@@ -1029,6 +1029,393 @@ describe('ProductDetailPage', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
         expect(await screen.findByText('Cannot reverse: current stock is insufficient.')).toBeInTheDocument();
         expect(screen.getByText('Stock increased by 5')).toBeInTheDocument();
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Phase 7H Slice 2: keyboard operation and focus management of the undo
+    // notice and the over-removal dialog. jsdom has no real Tab key, native
+    // Enter/Space activation or screen reader; those are covered by the real
+    // browser pass, not here. These tests exercise focus placement, Escape,
+    // timers, and exactly-once activation.
+    describe('keyboard and focus (7H Slice 2)', () => {
+      const T_ADD = { event: { id: 'new-event', appliedQuantity: 5 }, errors: [] };
+      const deferred = () => {
+        let resolve;
+        const promise = new Promise((r) => (resolve = r));
+        return { promise, resolve };
+      };
+      const noticeEl = () => document.querySelector('.undo-notice');
+      const slot = () => document.querySelector('.undo-slot');
+      const undoButton = () => screen.getByRole('button', { name: 'Undo' });
+      const dismissButton = () => screen.getByRole('button', { name: 'Dismiss' });
+      const focusOn = (el) => act(() => el.focus());
+      const tabStops = () =>
+        [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter(
+          (el) => !el.disabled && el.getAttribute('tabindex') !== '-1'
+        );
+
+      async function withFakeTimers(fn) {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          await fn();
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+
+      // Add 5 with focus on Save (as after a keyboard submit), wait for the notice.
+      async function addWithFocusOnSave(stock = {}) {
+        const ctx = mount({ stock: { addStock: vi.fn().mockResolvedValue(T_ADD), ...stock } });
+        await openAdd();
+        fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+        focusOn(screen.getByText('Save'));
+        fireEvent.click(screen.getByText('Save'));
+        await screen.findByText('Stock increased by 5');
+        return ctx;
+      }
+
+      describe('when a notice appears', () => {
+        it('never takes focus; focus returns to Add Stock because the Save button that had it is gone', async () => {
+          await addWithFocusOnSave();
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Add Stock' })).toHaveFocus());
+          expect(noticeEl().contains(document.activeElement)).toBe(false);
+        });
+
+        it('after Remove Stock, focus returns to Remove Stock', async () => {
+          mount({ stock: { removeStock: vi.fn().mockResolvedValue({ event: { id: 'r1', appliedQuantity: 3 }, errors: [] }) } });
+          await openRemove();
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } });
+          focusOn(screen.getByText('Save'));
+          fireEvent.click(screen.getByText('Save'));
+          await screen.findByText('Stock reduced by 3');
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Stock' })).toHaveFocus());
+          expect(noticeEl().contains(document.activeElement)).toBe(false);
+        });
+
+        it('does not steal focus the user moved elsewhere while the save was running', async () => {
+          const pending = deferred();
+          mount({ stock: { addStock: vi.fn(() => pending.promise) } });
+          await openAdd();
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+          focusOn(screen.getByText('Save'));
+          fireEvent.click(screen.getByText('Save'));
+          const edit = screen.getByRole('link', { name: 'Edit Product' });
+          focusOn(edit);
+          await act(async () => pending.resolve(T_ADD));
+          await screen.findByText('Stock increased by 5');
+          expect(edit).toHaveFocus();
+        });
+
+        it('leaves focus alone when it was not in the form (pointer user)', async () => {
+          mount({ stock: { addStock: vi.fn().mockResolvedValue(T_ADD) } });
+          await openAdd();
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+          fireEvent.click(screen.getByText('Save')); // click without focusing, as Safari does
+          await screen.findByText('Stock increased by 5');
+          expect(document.body).toHaveFocus();
+        });
+
+        it('Undo and Dismiss are native, enabled buttons directly after Remove Stock in tab order', async () => {
+          await addWithFocusOnSave();
+          const stops = tabStops();
+          const remove = stops.indexOf(screen.getByRole('button', { name: 'Remove Stock' }));
+          expect(stops.indexOf(undoButton())).toBe(remove + 1);
+          expect(stops.indexOf(dismissButton())).toBe(remove + 2);
+          for (const b of [undoButton(), dismissButton()]) {
+            expect(b.tagName).toBe('BUTTON');
+            expect(b).not.toHaveAttribute('tabindex');
+            expect(b).not.toHaveAttribute('aria-hidden');
+          }
+        });
+      });
+
+      describe('Dismiss', () => {
+        it('closes the notice WITHOUT reversing, and returns focus to the action that was used', async () => {
+          const { stockEventService } = await addWithFocusOnSave();
+          focusOn(dismissButton());
+          fireEvent.click(dismissButton());
+          expect(noticeEl()).toBeNull();
+          expect(stockEventService.reverseEvent).not.toHaveBeenCalled();
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Add Stock' })).toHaveFocus());
+        });
+
+        it('leaves focus alone when it was not inside the notice', async () => {
+          await addWithFocusOnSave();
+          const edit = screen.getByRole('link', { name: 'Edit Product' });
+          focusOn(edit);
+          fireEvent.click(dismissButton());
+          expect(noticeEl()).toBeNull();
+          expect(edit).toHaveFocus();
+        });
+      });
+
+      describe('Undo', () => {
+        it('reverses exactly once, returns focus, and announces the result (then clears it)', async () => {
+          await withFakeTimers(async () => {
+            const { stockEventService } = await addWithFocusOnSave({
+              reverseEvent: vi.fn().mockResolvedValue({ event: { id: 'rev' }, errors: [] })
+            });
+            const region = slot();
+            focusOn(undoButton());
+            fireEvent.click(undoButton());
+
+            await waitFor(() => expect(noticeEl()).toBeNull());
+            expect(stockEventService.reverseEvent).toHaveBeenCalledTimes(1);
+            expect(stockEventService.reverseEvent).toHaveBeenCalledWith('new-event');
+            expect(screen.getByRole('button', { name: 'Add Stock' })).toHaveFocus();
+            expect(slot()).toBe(region); // the live region persists
+            expect(region).toHaveTextContent('Stock change undone.');
+            expect(region.querySelector('.visually-hidden')).not.toBeNull();
+
+            await act(async () => vi.advanceTimersByTimeAsync(5100));
+            expect(region).toBeEmptyDOMElement(); // transient: nothing stale left behind
+          });
+        });
+
+        it('two activations in the same tick reverse once; focus stays on Undo while it runs', async () => {
+          const pending = deferred();
+          const { stockEventService } = await addWithFocusOnSave({ reverseEvent: vi.fn(() => pending.promise) });
+          focusOn(undoButton());
+          fireEvent.click(undoButton());
+          fireEvent.click(undoButton());
+          fireEvent.click(undoButton());
+
+          expect(stockEventService.reverseEvent).toHaveBeenCalledTimes(1);
+          expect(undoButton()).toHaveAttribute('aria-disabled', 'true');
+          expect(undoButton()).not.toBeDisabled(); // a disabled button would lose focus
+          expect(undoButton()).toHaveFocus();
+
+          await act(async () => pending.resolve({ event: { id: 'rev' }, errors: [] }));
+          await waitFor(() => expect(noticeEl()).toBeNull());
+          expect(stockEventService.reverseEvent).toHaveBeenCalledTimes(1);
+        });
+
+        it('a failed Undo keeps the notice, keeps focus on Undo, and can be retried', async () => {
+          const reverseEvent = vi
+            .fn()
+            .mockResolvedValueOnce({ event: null, errors: ['Cannot reverse: current stock is insufficient.'] })
+            .mockResolvedValueOnce({ event: { id: 'rev' }, errors: [] });
+          await addWithFocusOnSave({
+            getHistory: vi.fn().mockResolvedValue([ev('new-event', { quantity: 5, recordedAt: T1 })]),
+            reverseEvent
+          });
+          focusOn(undoButton());
+          fireEvent.click(undoButton());
+          await screen.findByText('Cannot reverse: current stock is insufficient.');
+
+          expect(noticeEl()).not.toBeNull();
+          expect(undoButton()).not.toHaveAttribute('aria-disabled');
+          expect(undoButton()).toHaveFocus();
+
+          fireEvent.click(undoButton());
+          await waitFor(() => expect(noticeEl()).toBeNull());
+          expect(reverseEvent).toHaveBeenCalledTimes(2);
+        });
+
+        it('reversing from the history list is announced as reversed', async () => {
+          mount({
+            history: [ev('e1', { quantity: 5, recordedAt: T1 })],
+            stock: { reverseEvent: vi.fn().mockResolvedValue({ event: { id: 'rev' }, errors: [] }) }
+          });
+          fireEvent.click(await screen.findByRole('button', { name: 'Reverse this action' }));
+          await waitFor(() => expect(slot()).toHaveTextContent('Stock change reversed.'));
+        });
+      });
+
+      describe('expiry', () => {
+        const stillThere = () => expect(screen.getByText('Stock increased by 5')).toBeInTheDocument();
+        const gone = () => expect(screen.queryByText('Stock increased by 5')).not.toBeInTheDocument();
+        const advance = (ms) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+        it('is paused while the pointer is over the notice, then restarts the full duration', async () => {
+          await withFakeTimers(async () => {
+            await addWithFocusOnSave();
+            fireEvent.mouseEnter(noticeEl());
+            await advance(20000);
+            stillThere();
+            fireEvent.mouseLeave(noticeEl());
+            await advance(4900);
+            stillThere();
+            await advance(200);
+            gone();
+          });
+        });
+
+        it('is paused while focus is inside the notice, including when moving between its buttons', async () => {
+          await withFakeTimers(async () => {
+            await addWithFocusOnSave();
+            focusOn(undoButton());
+            await advance(6000);
+            stillThere();
+            focusOn(dismissButton()); // Undo -> Dismiss: still inside the notice
+            await advance(6000);
+            stillThere();
+            act(() => dismissButton().blur()); // focus leaves
+            await advance(4900);
+            stillThere();
+            await advance(200);
+            gone();
+          });
+        });
+
+        it('does not expire while a reversal is in flight, and the notice survives its failure', async () => {
+          await withFakeTimers(async () => {
+            const pending = deferred();
+            await addWithFocusOnSave({
+              getHistory: vi.fn().mockResolvedValue([ev('new-event', { quantity: 5, recordedAt: T1 })]),
+              reverseEvent: vi.fn(() => pending.promise)
+            });
+            fireEvent.click(undoButton());
+            await advance(10000);
+            stillThere();
+            await act(async () => pending.resolve({ event: null, errors: ['Cannot reverse: current stock is insufficient.'] }));
+            await advance(100);
+            stillThere(); // the failed Undo can be retried
+            await advance(5100);
+            gone(); // and it expires normally once nothing is happening
+          });
+        });
+
+        it('a second stock change replaces the notice and restarts the expiry', async () => {
+          await withFakeTimers(async () => {
+            const addStock = vi
+              .fn()
+              .mockResolvedValueOnce(T_ADD)
+              .mockResolvedValueOnce({ event: { id: 'e2', appliedQuantity: 7 }, errors: [] });
+            mount({ stock: { addStock } });
+            const add = async (qty) => {
+              fireEvent.click(await screen.findByRole('button', { name: 'Add Stock' }));
+              fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: qty } });
+              fireEvent.click(screen.getByText('Save'));
+            };
+            await add('5');
+            await screen.findByText('Stock increased by 5');
+            await advance(3000);
+            await add('7');
+            await screen.findByText('Stock increased by 7');
+            await advance(3000); // 6 s after the first, 3 s after the second
+            expect(screen.getByText('Stock increased by 7')).toBeInTheDocument();
+            await advance(2100);
+            expect(screen.queryByText('Stock increased by 7')).not.toBeInTheDocument();
+          });
+        });
+
+        it('a hover that never sent mouseleave cannot freeze the NEXT notice', async () => {
+          await withFakeTimers(async () => {
+            await addWithFocusOnSave();
+            fireEvent.mouseEnter(noticeEl());
+            fireEvent.click(dismissButton()); // notice removed while "hovered"
+            fireEvent.click(screen.getByRole('button', { name: 'Add Stock' }));
+            fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+            fireEvent.click(screen.getByText('Save'));
+            await screen.findByText('Stock increased by 5');
+            await advance(5100);
+            gone();
+          });
+        });
+      });
+
+      describe('over-removal dialog', () => {
+        const OVER = () => ({
+          wouldOverRemove: vi.fn().mockResolvedValue(true),
+          removeStock: vi.fn().mockResolvedValue({ event: { id: 'r1', appliedQuantity: 10 }, errors: [] })
+        });
+
+        async function openWarning(stock = OVER()) {
+          const ctx = mount({ stock });
+          await openRemove();
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '25' } });
+          focusOn(screen.getByText('Save'));
+          fireEvent.click(screen.getByText('Save'));
+          const dialog = await screen.findByRole('dialog');
+          return { ...ctx, dialog };
+        }
+
+        it('has an accessible name and a description that resolves to the warning text', async () => {
+          await openWarning();
+          const dialog = screen.getByRole('dialog', { name: 'Remove more than the available stock?' });
+          const description = document.getElementById(dialog.getAttribute('aria-describedby'));
+          expect(description).toHaveTextContent('Only 10 units are currently available. Remove 25 anyway?');
+        });
+
+        it('is a plain, non-modal dialog (not an alertdialog): focus is free to leave and the page behind stays interactive', async () => {
+          await openWarning();
+          const dialog = screen.getByRole('dialog', { name: 'Remove more than the available stock?' });
+          expect(dialog).toHaveAttribute('role', 'dialog');
+          expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+          expect(dialog).not.toHaveAttribute('aria-modal', 'true');
+
+          // Nothing behind it is hidden from assistive technology or inert...
+          const quantity = screen.getByLabelText('Quantity');
+          const edit = screen.getByRole('link', { name: 'Edit Product' });
+          for (const el of [quantity, edit]) expect(el.closest('[aria-hidden="true"], [inert]')).toBeNull();
+          // ...and focus is not trapped: it can move out of the dialog and the dialog stays open.
+          focusOn(quantity);
+          expect(quantity).toHaveFocus();
+          focusOn(edit);
+          expect(edit).toHaveFocus();
+          expect(screen.getByRole('dialog')).toBeInTheDocument();
+        });
+
+        it('opens with focus on Cancel (the safe choice), never on Continue, and removes nothing', async () => {
+          const { stockEventService } = await openWarning();
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+          expect(screen.getByRole('button', { name: 'Continue' })).not.toHaveFocus();
+          expect(stockEventService.removeStock).not.toHaveBeenCalled();
+        });
+
+        it('Escape cancels without removing, keeps what was typed, and returns focus to Save', async () => {
+          const { stockEventService } = await openWarning();
+          fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+          expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+          expect(stockEventService.removeStock).not.toHaveBeenCalled();
+          expect(screen.getByLabelText('Quantity')).toHaveValue(25);
+          await waitFor(() => expect(screen.getByText('Save')).toHaveFocus());
+        });
+
+        it('Escape pressed outside the dialog does not dismiss it', async () => {
+          await openWarning();
+          fireEvent.keyDown(screen.getByLabelText('Quantity'), { key: 'Escape' });
+          expect(screen.getByRole('dialog')).toBeInTheDocument();
+        });
+
+        it('other keys do nothing', async () => {
+          const { stockEventService } = await openWarning();
+          fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Enter' });
+          fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: ' ' });
+          expect(screen.getByRole('dialog')).toBeInTheDocument();
+          expect(stockEventService.removeStock).not.toHaveBeenCalled();
+        });
+
+        it('the Cancel button also returns focus to Save', async () => {
+          await openWarning();
+          fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+          await waitFor(() => expect(screen.getByText('Save')).toHaveFocus());
+        });
+
+        it('Continue removes exactly the warned quantity once, then returns focus to Remove Stock (the form is gone)', async () => {
+          const { stockEventService } = await openWarning();
+          focusOn(screen.getByRole('button', { name: 'Continue' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+          expect(await screen.findByText('Stock reduced by 10')).toBeInTheDocument();
+          expect(stockEventService.removeStock).toHaveBeenCalledTimes(1);
+          expect(stockEventService.removeStock).toHaveBeenCalledWith({ productId: 'p1', quantity: 25, comment: '' });
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Stock' })).toHaveFocus());
+          expect(noticeEl().contains(document.activeElement)).toBe(false);
+        });
+
+        it('if Continue fails, the form is still there and focus returns to Save', async () => {
+          await openWarning({
+            ...OVER(),
+            removeStock: vi.fn().mockResolvedValue({ event: null, errors: ['Quantity must be greater than 0.'] })
+          });
+          focusOn(screen.getByRole('button', { name: 'Continue' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+          await screen.findByText('Quantity must be greater than 0.');
+          await waitFor(() => expect(screen.getByText('Save')).toHaveFocus());
+        });
       });
     });
 

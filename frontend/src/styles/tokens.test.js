@@ -426,3 +426,16 @@ describe('base.css focus', () => {
     expect(baseCss).toMatch(/:focus-visible\s*{[^}]*outline:\s*var\(--focus-ring\)/);
   });
 });
+
+describe('classifications.css removal dialog', () => {
+  // The panel is styled through an attribute selector on its role, so a role
+  // change that misses the stylesheet silently strips the styling and no
+  // behavioral test would notice.
+  it('is styled by the role the component actually renders (dialog), with no stale alertdialog selector', () => {
+    const component = readFileSync(new URL('../components/ClassificationRemoval.jsx', import.meta.url), 'utf8');
+    expect(component).toContain('role="dialog"');
+    expect(component).not.toContain('role="alertdialog"');
+    expect(classificationsCss).toContain(".classifications [role='dialog']");
+    expect(classificationsCss).not.toContain('alertdialog');
+  });
+});
