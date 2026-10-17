@@ -51,9 +51,29 @@ const KNOWN_ERROR_TYPES = new Set([
   'URIError'
 ]);
 
-/** @returns {string} a built-in error type name, or 'Error' */
+/**
+ * Reduce a thrown value to a built-in error type name, or 'Error'. Never
+ * throws: this runs inside componentDidCatch, and an exception there has no
+ * boundary above it, so in a production build the whole tree unmounts to a
+ * blank screen (verified against React's production build with a throwing
+ * `name` getter, which this guard fixes). A Proxy that throws on EVERY
+ * property read fails earlier, inside React's own handling of the thrown
+ * value, before any boundary runs; that cannot be fixed here, but this
+ * function still never throws for one.
+ *
+ * The try/catch wraps ONLY the single read of `name`, because that read can
+ * run arbitrary code on a value of unknown provenance. It is read once, so
+ * the value that is checked is the value that is returned.
+ *
+ * @returns {string} a built-in error type name, or 'Error'
+ */
 export function safeErrorType(error) {
-  const name = error?.name;
+  let name;
+  try {
+    name = error?.name;
+  } catch {
+    return 'Error';
+  }
   return typeof name === 'string' && KNOWN_ERROR_TYPES.has(name) ? name : 'Error';
 }
 

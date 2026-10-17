@@ -133,6 +133,80 @@ describe('AppErrorBoundary', () => {
       expect(safeErrorType(thrown)).toBe('Error');
     });
 
+    // Reading `name` runs arbitrary code when the thrown value is an unusual
+    // object: a getter, or a Proxy (including a revoked one). If that read
+    // throws inside componentDidCatch, React has no boundary above it to
+    // catch the failure, so the whole app unmounts to a blank screen -- the
+    // exact outcome the boundary exists to prevent.
+    describe('thrown values whose `name` cannot be read safely', () => {
+      const hostileGetter = () => ({
+        get name() {
+          throw new Error('name getter exploded: secret product data');
+        }
+      });
+      const revokedProxy = () => {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        return proxy;
+      };
+      const throwingProxy = () =>
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error('proxy trap exploded: secret product data');
+            }
+          }
+        );
+
+      it.each([
+        ['a throwing name getter', hostileGetter],
+        ['a revoked Proxy', revokedProxy],
+        ['a Proxy whose get trap throws', throwingProxy]
+      ])('safeErrorType: %s -> "Error" instead of throwing', (_label, make) => {
+        const hostile = make();
+        expect(() => safeErrorType(hostile)).not.toThrow();
+        expect(safeErrorType(hostile)).toBe('Error');
+      });
+
+      it('reads `name` at most once, so the value checked is the value returned', () => {
+        let reads = 0;
+        const flipping = {
+          get name() {
+            reads += 1;
+            return reads === 1 ? 'TypeError' : 'secret product data: Parle-G';
+          }
+        };
+        expect(safeErrorType(flipping)).toBe('TypeError');
+        expect(reads).toBe(1);
+      });
+
+      it.each([
+        ['a throwing name getter', hostileGetter],
+        ['a revoked Proxy', revokedProxy]
+      ])('the boundary still shows the fallback (not a blank screen) when %s is thrown', (_label, make) => {
+        const hostile = make();
+        function ThrowsHostile() {
+          throw hostile;
+        }
+        render(
+          <AppErrorBoundary>
+            <ThrowsHostile />
+          </AppErrorBoundary>
+        );
+        expect(screen.getByRole('heading', { level: 1, name: 'Something went wrong' })).toHaveFocus();
+        const ours = consoleError.mock.calls.find(([first]) => first === 'ShopStock UI failure:');
+        expect(ours).toBeDefined();
+        // React's DEVELOPMENT build replaces a hostile thrown value with its own
+        // error before componentDidCatch sees it (for a revoked Proxy that is a
+        // TypeError), so only the allowlist is asserted here. The production
+        // build passes the raw value through; the safeErrorType cases above are
+        // what protect that path.
+        expect(['Error', 'TypeError']).toContain(ours[1]);
+        expect(JSON.stringify(ours)).not.toContain('secret product data');
+      });
+    });
+
     it('the boundary logs the normalized type, never a custom name', () => {
       function Hostile() {
         const error = new Error('hidden');
