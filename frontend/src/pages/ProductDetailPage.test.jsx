@@ -5,6 +5,7 @@ import ProductDetailPage from './ProductDetailPage.jsx';
 import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 import { AppProvider } from '../contexts/AppContext.jsx';
 import { todayDateOnly } from '../domain/shared/dates.js';
+import { createAddStockEvent, createRemoveStockEvent } from '../domain/stock/stockEventFactory.js';
 
 // productService and stockEventService are mocked here at the AppContext
 // boundary -- the real service -> repository -> Dexie path is covered by
@@ -477,11 +478,12 @@ describe('ProductDetailPage', () => {
       it.each([
         [3, 'Low Stock'],
         [0, 'Out of Stock']
-      ])('labels quantity %s as %s using role="status"', async (quantity, label) => {
+      ])('labels quantity %s as %s as plain text, not a live region', async (quantity, label) => {
         mount({ product: { ...SAMPLE_PRODUCT, quantity } });
         await heading();
         const badge = screen.getByText(label);
-        expect(badge).toHaveAttribute('role', 'status');
+        expect(badge).not.toHaveAttribute('role');
+        expect(badge.closest('[role="status"], [role="alert"], [aria-live]')).toBeNull();
         expect(screen.queryByText('In stock')).not.toBeInTheDocument();
       });
 
@@ -763,23 +765,199 @@ describe('ProductDetailPage', () => {
         });
       });
 
-      describe('validation errors stay form-level and are tied to the inputs', () => {
-        it('shows the service messages and links the inputs to them with aria-describedby', async () => {
-          mount({
-            stock: {
-              addStock: vi.fn().mockResolvedValue({ event: null, errors: ['Quantity must be greater than 0.', 'Cost must be 0 or more.'] })
-            }
-          });
+      // Phase 7H Slice 3. The messages are produced by the REAL domain factories
+      // (not typed in by hand), so if their wording ever stops matching what the
+      // page uses to find the field, these fail instead of silently dropping
+      // aria-invalid.
+      describe('field-error association (aria-invalid on the field a message is about)', () => {
+        const realAddErrors = (input) => createAddStockEvent({ productId: 'p1', ...input }).errors;
+        const realRemoveErrors = (input) => createRemoveStockEvent({ productId: 'p1', ...input }).errors;
+        const msg = (errors, start) => errors.find((m) => m.startsWith(start));
+        // Which of the three Add fields have an aria-describedby at all.
+        const describedLabels = () =>
+          ['Quantity', 'Cost per unit', 'Purchase date', 'Comment'].filter((label) =>
+            screen.getByLabelText(label).hasAttribute('aria-describedby')
+          );
+        const invalidState = () =>
+          Object.fromEntries(
+            ['Quantity', 'Cost per unit', 'Purchase date', 'Comment'].map((label) => [
+              label,
+              screen.getByLabelText(label).getAttribute('aria-invalid')
+            ])
+          );
+
+        it('flags exactly the fields the real messages are about, and describes each by its OWN message only', async () => {
+          const errors = realAddErrors({ quantity: 0, costPerUnit: -1, purchaseDate: '2026-02-31' });
+          expect(errors).toHaveLength(3); // quantity, cost and date -- if this changes, revisit the matching
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors }) } });
+          await openAdd();
+          expect(invalidState()).toEqual({ Quantity: null, 'Cost per unit': null, 'Purchase date': null, Comment: null });
+          fireEvent.click(screen.getByText('Save'));
+
+          const list = await screen.findByRole('alert');
+          expect(invalidState()).toEqual({ Quantity: 'true', 'Cost per unit': 'true', 'Purchase date': 'true', Comment: null });
+
+          for (const [label, start] of [['Quantity', 'Quantity'], ['Cost per unit', 'Cost per unit'], ['Purchase date', 'Purchase date']]) {
+            const field = screen.getByLabelText(label);
+            expect(field).toHaveAccessibleDescription(msg(errors, start)); // its message, nothing else
+            // the description points at a list item inside the form's alert
+            const item = document.getElementById(field.getAttribute('aria-describedby'));
+            expect(list).toContainElement(item);
+            expect(item).toHaveTextContent(msg(errors, start));
+          }
+          expect(screen.getByLabelText('Quantity')).not.toHaveAccessibleDescription(expect.stringContaining('Cost per unit'));
+          expect(describedLabels()).toEqual(['Quantity', 'Cost per unit', 'Purchase date']); // not Comment
+          expect(list).toHaveAttribute('id', 'add-form-errors'); // the alert itself is unchanged
+        });
+
+        it.each([
+          ['quantity', { quantity: 0 }, { Quantity: 'true', 'Cost per unit': null, 'Purchase date': null }],
+          ['cost', { quantity: 1, costPerUnit: -5 }, { Quantity: null, 'Cost per unit': 'true', 'Purchase date': null }],
+          ['purchase date', { quantity: 1, purchaseDate: '2026-02-31' }, { Quantity: null, 'Cost per unit': null, 'Purchase date': 'true' }]
+        ])('flags only the %s field when only that is wrong', async (_name, input, expected) => {
+          const errors = realAddErrors(input);
+          expect(errors).toHaveLength(1);
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors }) } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          await screen.findByRole('alert');
+          expect(invalidState()).toMatchObject(expected);
+
+          // only the field that is wrong is described, and by exactly its message
+          const invalidLabel = Object.keys(expected).find((label) => expected[label] === 'true');
+          expect(describedLabels()).toEqual([invalidLabel]);
+          expect(screen.getByLabelText(invalidLabel)).toHaveAccessibleDescription(errors[0]);
+        });
+
+        it('a message about the form as a whole flags no field, but is still announced', async () => {
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors: ['Product not found.'] }) } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          expect(await screen.findByRole('alert')).toHaveTextContent('Product not found.');
+          expect(invalidState()).toEqual({ Quantity: null, 'Cost per unit': null, 'Purchase date': null, Comment: null });
+          expect(describedLabels()).toEqual([]); // a form-level message is not any field's description
+        });
+
+        it('a form-level message next to a field message: both are announced, but only the field message describes the field', async () => {
+          const quantityMessage = realAddErrors({ quantity: 0 })[0];
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors: ['Product not found.', quantityMessage] }) } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          const list = await screen.findByRole('alert');
+          expect(list).toHaveTextContent('Product not found.');
+          expect(list).toHaveTextContent(quantityMessage);
+
+          expect(screen.getByLabelText('Quantity')).toHaveAccessibleDescription(quantityMessage);
+          expect(screen.getByLabelText('Quantity')).not.toHaveAccessibleDescription(expect.stringContaining('Product not found'));
+          expect(describedLabels()).toEqual(['Quantity']);
+        });
+
+        it('a save failure is announced but described on no field, and clears the previous field description', async () => {
+          const consoleError = captureConsoleError('Adding stock failed.');
+          const addStock = vi
+            .fn()
+            .mockResolvedValueOnce({ event: null, errors: realAddErrors({ quantity: 0 }) })
+            .mockRejectedValueOnce(new Error('write failed'));
+          mount({ stock: { addStock } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          await waitFor(() => expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-describedby'));
+
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } });
+          fireEvent.click(screen.getByText('Save'));
+          const alert = await screen.findByRole('alert'); // still announced
+          expect(alert).toHaveTextContent("We couldn't save that stock change.");
+          expect(alert).toHaveAttribute('id', 'add-form-submit-error');
+          expect(describedLabels()).toEqual([]);
+          expect(invalidState()).toEqual({ Quantity: null, 'Cost per unit': null, 'Purchase date': null, Comment: null });
+          expect(consoleError).toHaveBeenCalledTimes(1);
+        });
+
+        it('the flags follow each attempt: a fixed field is cleared when a different one fails next', async () => {
+          const addStock = vi
+            .fn()
+            .mockResolvedValueOnce({ event: null, errors: realAddErrors({ quantity: 0 }) })
+            .mockResolvedValueOnce({ event: null, errors: realAddErrors({ quantity: 1, costPerUnit: -5 }) });
+          mount({ stock: { addStock } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          await waitFor(() => expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-invalid', 'true'));
+
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1' } });
+          fireEvent.click(screen.getByText('Save'));
+          await waitFor(() => expect(screen.getByLabelText('Cost per unit')).toHaveAttribute('aria-invalid', 'true'));
+          expect(screen.getByLabelText('Quantity')).not.toHaveAttribute('aria-invalid');
+          // and the descriptions follow: Quantity lost its message, Cost per unit has its own
+          expect(screen.getByLabelText('Quantity')).not.toHaveAttribute('aria-describedby');
+          expect(screen.getByLabelText('Cost per unit')).toHaveAccessibleDescription(realAddErrors({ quantity: 1, costPerUnit: -5 })[0]);
+          expect(describedLabels()).toEqual(['Cost per unit']);
+        });
+
+        it('is cleared after a successful save and when the form is closed and reopened', async () => {
+          const addStock = vi
+            .fn()
+            .mockResolvedValueOnce({ event: null, errors: realAddErrors({ quantity: 0 }) })
+            .mockResolvedValueOnce({ event: { id: 'n1', appliedQuantity: 1 }, errors: [] });
+          mount({ stock: { addStock } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+          await waitFor(() => expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-invalid', 'true'));
+
+          // close and reopen without saving
+          fireEvent.click(screen.getByRole('button', { name: 'Add Stock' }));
+          await openAdd();
+          expect(invalidState()).toEqual({ Quantity: null, 'Cost per unit': null, 'Purchase date': null, Comment: null });
+          expect(describedLabels()).toEqual([]); // no stale association after close and reopen
+
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1' } });
+          fireEvent.click(screen.getByText('Save'));
+          await screen.findByText('Stock increased by 1');
+          expect(screen.queryByLabelText('Quantity')).not.toBeInTheDocument(); // form closed with the notice
+        });
+
+        it('remove form: the real quantity message flags Quantity, and clears on a successful save', async () => {
+          const errors = realRemoveErrors({ quantity: 0 });
+          expect(errors).toEqual(['Quantity must be greater than 0.']);
+          const removeStock = vi
+            .fn()
+            .mockResolvedValueOnce({ event: null, errors })
+            .mockResolvedValueOnce({ event: { id: 'r1', appliedQuantity: 1 }, errors: [] });
+          mount({ stock: { removeStock } });
+          await openRemove();
+          expect(screen.getByLabelText('Quantity')).not.toHaveAttribute('aria-invalid');
+          fireEvent.click(screen.getByText('Save'));
+
+          const list = await screen.findByRole('alert');
+          expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-invalid', 'true');
+          expect(screen.getByLabelText('Quantity')).toHaveAccessibleDescription(errors[0]);
+          expect(list).toContainElement(document.getElementById(screen.getByLabelText('Quantity').getAttribute('aria-describedby')));
+          expect(screen.getByLabelText('Comment')).not.toHaveAttribute('aria-invalid');
+          expect(screen.getByLabelText('Comment')).not.toHaveAttribute('aria-describedby');
+
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1' } });
+          fireEvent.click(screen.getByText('Save'));
+          await screen.findByText('Stock reduced by 1');
+          expect(screen.queryByLabelText('Quantity')).not.toBeInTheDocument();
+        });
+      });
+
+      describe('validation errors are announced by the form and each described on its own field', () => {
+        it('shows the service messages in one alert, and links each input to its own message with aria-describedby', async () => {
+          // Real domain messages: a quantity error and a cost error, no date error.
+          const errors = createAddStockEvent({ productId: 'p1', quantity: 0, costPerUnit: -1 }).errors;
+          expect(errors).toHaveLength(2);
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors }) } });
           await openAdd();
           expect(screen.getByLabelText('Quantity')).not.toHaveAttribute('aria-describedby');
           fireEvent.click(screen.getByText('Save'));
 
           const list = await screen.findByRole('alert');
-          expect(list).toHaveTextContent('Quantity must be greater than 0.');
-          expect(list).toHaveTextContent('Cost must be 0 or more.');
-          for (const label of ['Quantity', 'Cost per unit', 'Purchase date']) {
-            expect(screen.getByLabelText(label)).toHaveAttribute('aria-describedby', list.id);
-          }
+          expect(list).toHaveTextContent(errors[0]);
+          expect(list).toHaveTextContent(errors[1]);
+          expect(screen.getByLabelText('Quantity')).toHaveAccessibleDescription(errors[0]);
+          expect(screen.getByLabelText('Cost per unit')).toHaveAccessibleDescription(errors[1]);
+          // the date has no error, so it is not described by anyone else's
+          expect(screen.getByLabelText('Purchase date')).not.toHaveAttribute('aria-describedby');
           // the page is intact and stays on the product
           expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
         });
@@ -818,7 +996,13 @@ describe('ProductDetailPage', () => {
           'Adding stock failed.',
           expect.objectContaining({ message: 'write failed' })
         );
-        expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-describedby', alert.id);
+        // A save failure is about the operation, not any field: it is announced by its
+        // own alert and is not part of any field's description.
+        expect(alert).toHaveAttribute('id', 'add-form-submit-error');
+        for (const label of ['Quantity', 'Cost per unit', 'Purchase date', 'Comment']) {
+          expect(screen.getByLabelText(label)).not.toHaveAttribute('aria-describedby');
+          expect(screen.getByLabelText(label)).not.toHaveAttribute('aria-invalid');
+        }
         expect(screen.getByLabelText('Quantity')).toHaveValue(6);
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
 
@@ -890,7 +1074,7 @@ describe('ProductDetailPage', () => {
         expect(await screen.findByText('Stock reduced by 10')).toBeInTheDocument();
       });
 
-      it('shows form-level validation errors tied to the quantity input', async () => {
+      it('announces a validation error in the form alert and describes the quantity input with it', async () => {
         mount({
           stock: { removeStock: vi.fn().mockResolvedValue({ event: null, errors: ['Quantity must be greater than 0.'] }) }
         });
@@ -898,7 +1082,8 @@ describe('ProductDetailPage', () => {
         fireEvent.click(screen.getByText('Save'));
         const list = await screen.findByRole('alert');
         expect(list).toHaveTextContent('Quantity must be greater than 0.');
-        expect(screen.getByLabelText('Quantity')).toHaveAttribute('aria-describedby', list.id);
+        expect(screen.getByLabelText('Quantity')).toHaveAccessibleDescription('Quantity must be greater than 0.');
+        expect(list).toContainElement(document.getElementById(screen.getByLabelText('Quantity').getAttribute('aria-describedby')));
       });
 
       it('reports a failure of the over-removal check without losing the page', async () => {
@@ -937,6 +1122,11 @@ describe('ProductDetailPage', () => {
           'Removing stock failed.',
           expect.objectContaining({ message: 'disk full' })
         );
+        expect(alert).toHaveAttribute('id', 'remove-form-submit-error');
+        for (const label of ['Quantity', 'Comment']) {
+          expect(screen.getByLabelText(label)).not.toHaveAttribute('aria-describedby');
+          expect(screen.getByLabelText(label)).not.toHaveAttribute('aria-invalid');
+        }
         expect(screen.getByLabelText('Quantity')).toHaveValue(2);
 
         fireEvent.click(screen.getByText('Save'));
@@ -1308,6 +1498,72 @@ describe('ProductDetailPage', () => {
           fireEvent.click(reverseButton()); // click without focusing, as Safari does
           await waitFor(() => expect(slot()).toHaveTextContent('Stock change reversed.'));
           expect(document.body).toHaveFocus();
+        });
+      });
+
+      // Phase 7H Slice 3. These count every live region that currently carries
+      // text, so a second mechanism announcing the same event (a status badge, a
+      // description re-read on focus, a region that is also focused) fails here.
+      // They pin the semantics only: what a screen reader actually speaks is not
+      // something jsdom can show.
+      describe('one event, one announcement', () => {
+        const LIVE = '[role="status"], [role="alert"], [role="log"], [aria-live]';
+        const announcing = () => [...document.querySelectorAll(LIVE)].filter((el) => el.textContent.trim() !== '');
+
+        it('adding stock to an out-of-stock product is announced once: the notice, not also the Out of Stock badge', async () => {
+          mount({
+            product: { ...SAMPLE_PRODUCT, quantity: 0 },
+            stock: { addStock: vi.fn().mockResolvedValue(T_ADD) }
+          });
+          await openAdd();
+          fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+          fireEvent.click(screen.getByText('Save'));
+          await screen.findByText('Stock increased by 5');
+
+          expect(screen.getByText('Out of Stock')).toBeInTheDocument(); // still shown, as text
+          const regions = announcing();
+          expect(regions).toHaveLength(1);
+          expect(regions[0]).toBe(slot());
+          expect(regions[0]).toHaveTextContent('Stock increased by 5');
+        });
+
+        it('undoing it is announced once, by the same region, and the old message is gone', async () => {
+          await addWithFocusOnSave({ reverseEvent: vi.fn().mockResolvedValue({ event: { id: 'rev' }, errors: [] }) });
+          fireEvent.click(undoButton());
+          await waitFor(() => expect(slot()).toHaveTextContent('Stock change undone.'));
+
+          const regions = announcing();
+          expect(regions).toHaveLength(1);
+          expect(regions[0]).toBe(slot());
+          expect(regions[0]).not.toHaveTextContent('Stock increased by 5');
+        });
+
+        it('a failed Undo is announced once, as an alert, and the notice stays silent', async () => {
+          await addWithFocusOnSave({
+            getHistory: vi.fn().mockResolvedValue([ev('new-event', { quantity: 5, recordedAt: T1 })]),
+            reverseEvent: vi.fn().mockResolvedValue({ event: null, errors: ['Cannot reverse: current stock is insufficient.'] })
+          });
+          const before = announcing().map((el) => el.textContent.trim());
+          expect(before).toHaveLength(1); // just the notice, which announced when it appeared
+          fireEvent.click(undoButton());
+          await screen.findByText('Cannot reverse: current stock is insufficient.');
+
+          const alerts = [...document.querySelectorAll('[role="alert"]')].filter((el) => el.textContent.trim() !== '');
+          expect(alerts).toHaveLength(1);
+          expect(alerts[0]).toHaveTextContent('Cannot reverse: current stock is insufficient.');
+          expect(slot()).not.toHaveTextContent('Cannot reverse');
+        });
+
+        it('a validation failure is announced once (the alert); the Save button that gets focus back does not repeat it', async () => {
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors: ['Quantity must be greater than 0.'] }) } });
+          await openAdd();
+          focusOn(screen.getByText('Save'));
+          fireEvent.click(screen.getByText('Save'));
+          const alert = await screen.findByRole('alert');
+
+          await waitFor(() => expect(screen.getByText('Save')).toHaveFocus()); // focus is restored to Save...
+          expect(announcing()).toEqual([alert]); // ...and the alert is the only thing announcing
+          expect(screen.getByText('Save')).not.toHaveAttribute('aria-describedby'); // ...and Save does not re-read it
         });
       });
 

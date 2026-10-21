@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode } from 'react';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
@@ -355,5 +355,40 @@ describe('under React StrictMode (effects mount, clean up and mount again)', () 
     expect(document.title).toBe('Products \u2014 ShopStock');
     view.unmount();
     expect(document.title).toBe('before');
+  });
+});
+
+// Phase 7H Slice 3: the shell publishes how much of the viewport its fixed
+// chrome covers, so keyboard focus is not scrolled underneath it. The hook's own
+// behaviour is tested in hooks/useFixedChromeInsets.test.jsx; this pins that the
+// real shell uses it, and on the right elements.
+describe('AppShell fixed-chrome insets', () => {
+  let rectSpy;
+  const root = document.documentElement;
+  afterEach(() => {
+    rectSpy?.mockRestore();
+    root.style.removeProperty('--chrome-top');
+    root.style.removeProperty('--chrome-bottom');
+  });
+
+  it('measures its own header and mobile bar, and clears the values when it unmounts', () => {
+    window.innerHeight = 667;
+    rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (this.tagName === 'HEADER') return { top: 0, bottom: 61, height: 61, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON() {} };
+      if (this.matches('[data-mobile-bar="true"]')) {
+        // the real bar is fixed by shell.css, which jsdom does not load
+        return { top: 618, bottom: 667, height: 49, left: 0, right: 0, width: 0, x: 0, y: 618, toJSON() {} };
+      }
+      return { top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON() {} };
+    });
+    const bar = () => document.querySelector('[data-mobile-bar="true"]');
+    const { unmount } = renderShell('/products');
+    expect(bar()).not.toBeNull();
+    expect(root.style.getPropertyValue('--chrome-top')).toBe('69px');
+    expect(root.style.getPropertyValue('--chrome-bottom')).toBe('0px'); // jsdom has no fixed bar CSS, so the inline nav counts for nothing
+
+    unmount();
+    expect(root.style.getPropertyValue('--chrome-top')).toBe('');
+    expect(root.style.getPropertyValue('--chrome-bottom')).toBe('');
   });
 });

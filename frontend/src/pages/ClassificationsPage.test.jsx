@@ -172,6 +172,32 @@ describe('ClassificationsPage', () => {
         expect(service.list).toHaveBeenCalledTimes(1); // nothing changed, nothing reloaded
       });
 
+      it('ties the add-form message to its input with aria-describedby, and drops it when the error clears', async () => {
+        const create = vi
+          .fn()
+          .mockResolvedValueOnce({ classification: null, errors: ['Name is required.'] })
+          .mockResolvedValueOnce({ classification: item({ id: 'c2', name: 'Treats' }), errors: [] });
+        renderPage(type, makeService({ list: vi.fn().mockResolvedValue([]), create }));
+        await screen.findByText(`No ${lower} yet. Add one above.`);
+        const input = screen.getByLabelText(`New ${singular} name`);
+        expect(input).not.toHaveAttribute('aria-invalid');
+        expect(input).not.toHaveAttribute('aria-describedby');
+
+        fireEvent.change(input, { target: { value: '   ' } });
+        fireEvent.click(screen.getByRole('button', { name: `Add ${singular}` }));
+        const alert = await screen.findByRole('alert');
+        expect(input).toHaveAttribute('aria-invalid', 'true');
+        expect(input).toHaveAttribute('aria-describedby', alert.id);
+        expect(alert.id).not.toBe('');
+        expect(input).toHaveAccessibleDescription('Name is required.');
+
+        fireEvent.change(input, { target: { value: 'Treats' } });
+        fireEvent.click(screen.getByRole('button', { name: `Add ${singular}` }));
+        await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+        expect(input).not.toHaveAttribute('aria-invalid');
+        expect(input).not.toHaveAttribute('aria-describedby');
+      });
+
       it('reports an unexpected failure plainly (and logs it)', async () => {
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         const service = makeService({ create: vi.fn().mockRejectedValue(new Error('disk')) });
@@ -228,6 +254,29 @@ describe('ClassificationsPage', () => {
 
         expect(await screen.findByRole('alert')).toHaveTextContent('Name is required.');
         expect(screen.getByLabelText('Name for Snacks')).toBeInTheDocument();
+      });
+
+      it('ties the rename message to its own input, and drops it when the error clears or editing is cancelled', async () => {
+        const rename = vi
+          .fn()
+          .mockResolvedValueOnce({ classification: null, errors: ['Name is required.'] })
+          .mockResolvedValueOnce({ classification: item({ name: 'Treats' }), errors: [] });
+        const service = makeService({ list: vi.fn().mockResolvedValue([item()]), rename });
+        await openRename(service);
+        const input = screen.getByLabelText('Name for Snacks');
+        expect(input).not.toHaveAttribute('aria-describedby');
+
+        fireEvent.change(input, { target: { value: ' ' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        const alert = await screen.findByRole('alert');
+        expect(input).toHaveAttribute('aria-invalid', 'true');
+        expect(input).toHaveAttribute('aria-describedby', alert.id);
+        expect(input).toHaveAccessibleDescription('Name is required.');
+
+        fireEvent.change(input, { target: { value: 'Treats' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        await screen.findByText('Renamed to “Treats”.');
+        expect(screen.queryByLabelText('Name for Snacks')).not.toBeInTheDocument(); // editing closed with the error
       });
     });
 
@@ -670,7 +719,10 @@ describe('ClassificationsPage', () => {
           const message = await loadingMessage();
           await waitFor(() => expect(message).toHaveFocus());
           expect(message).toHaveAttribute('tabindex', '-1'); // script-only focus target, not a Tab stop
-          expect(message).toHaveAttribute('role', 'status');
+          // It is announced by focus, so it must not ALSO be a live region (that would say it twice).
+          expect(message).not.toHaveAttribute('role');
+          expect(message.closest('[role="status"], [role="alert"], [aria-live]')).toBeNull();
+          expect(screen.queryAllByRole('status').filter((el) => /Checking/.test(el.textContent))).toHaveLength(0);
         });
 
         it('then moves on to Cancel when the check finishes', async () => {

@@ -17,8 +17,13 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 // does not add. Same for category/location/tag names. Revisit after 7F.
 //
 // Stock status is computed by the existing domain function, never here.
-// The low/out label keeps role="status" exactly as it had before 7D
-// (existing tests pin it; the accessibility semantics are a 7H concern).
+// The low/out label is plain text, not a live region (7H Slice 3). A stock
+// level is a state, not an event: it is part of the row link's accessible
+// name (the words are read with the product), and a role="status" repeated on
+// every row of a list, nested inside a link, would be a live region per item
+// for content that is not changing in response to anything the user did.
+// Changes the user causes (a stock edit) are announced by the page that made
+// them, once.
 
 const STATUS_MODIFIER = {
   [STOCK_STATUS.NORMAL]: 'ok',
@@ -44,13 +49,7 @@ export default function ProductRow({ product }) {
       <Link to={`/products/${product.id}`} className="product-row__link">
         <span className="product-row__name">{product.name || 'Unnamed product'}</span>
         <span className="product-row__quantity">{product.quantity}</span>
-        {attention ? (
-          <span role="status" className={statusClass}>
-            {status}
-          </span>
-        ) : (
-          <span className={statusClass}>In stock</span>
-        )}
+        <span className={statusClass}>{attention ? status : 'In stock'}</span>
         <span className="product-row__chevron" aria-hidden="true">
           &rsaquo;
         </span>

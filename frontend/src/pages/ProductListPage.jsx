@@ -440,7 +440,9 @@ export default function ProductListPage() {
             </ResourceView>
             {productsResource.status === 'error' && (
               <p>
-                <Link to="/">Go to Dashboard</Link>
+                <Link to="/" className="touch-link">
+                  Go to Dashboard
+                </Link>
               </p>
             )}
           </>

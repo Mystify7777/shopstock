@@ -110,7 +110,9 @@ export default function ClassificationRemoval({ config, classification, service,
 
   if (preview.status === 'loading') {
     return (
-      <p role="status" ref={loadingRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+      // Not role="status": this element receives focus, so it is announced by
+      // focus. A live region as well would announce the same words twice.
+      <p ref={loadingRef} tabIndex={-1} onKeyDown={handleKeyDown}>
         Checking which products use this {singular}&hellip;
       </p>
     );

@@ -73,6 +73,11 @@ export default function LoginPage({ reason = null, onCancel }) {
   }
 
   const notice = REASON_NOTICES[reason] ?? null;
+  // "Enter your username and password." is about the empty fields, so those
+  // (and only those) are invalid and described by it. A credentials or server
+  // failure is about the attempt as a whole, so it flags no field.
+  const usernameInvalid = Boolean(error) && username.trim() === '';
+  const passwordInvalid = Boolean(error) && password === '';
 
   return (
     <div className="login">
@@ -95,7 +100,8 @@ export default function LoginPage({ reason = null, onCancel }) {
               autoCapitalize="none"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              aria-invalid={error && username.trim() === '' ? 'true' : undefined}
+              aria-invalid={usernameInvalid ? 'true' : undefined}
+              aria-describedby={usernameInvalid ? 'login-error' : undefined}
             />
           </div>
           <div className="login__field">
@@ -107,12 +113,13 @@ export default function LoginPage({ reason = null, onCancel }) {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              aria-invalid={error && password === '' ? 'true' : undefined}
+              aria-invalid={passwordInvalid ? 'true' : undefined}
+              aria-describedby={passwordInvalid ? 'login-error' : undefined}
             />
           </div>
 
           {error && (
-            <p role="alert" className="login__error">
+            <p role="alert" id="login-error" className="login__error">
               {error}
             </p>
           )}

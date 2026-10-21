@@ -14,7 +14,9 @@ export default function NotFoundState({ message, linkTo, linkLabel }) {
   return (
     <div className="not-found-state">
       <p role="alert">{message}</p>
-      <Link to={linkTo}>{linkLabel}</Link>
+      <Link to={linkTo} className="touch-link">
+        {linkLabel}
+      </Link>
     </div>
   );
 }

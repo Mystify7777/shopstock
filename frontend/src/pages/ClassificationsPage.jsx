@@ -174,11 +174,16 @@ export default function ClassificationsPage({ type }) {
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           aria-invalid={addError ? 'true' : undefined}
+          aria-describedby={addError ? 'classification-add-error' : undefined}
         />
         <button type="submit" disabled={pending}>
           Add {config.singular}
         </button>
-        {addError && <p role="alert">{addError}</p>}
+        {addError && (
+          <p role="alert" id="classification-add-error">
+            {addError}
+          </p>
+        )}
       </form>
 
       {notice && <p role="status">{notice}</p>}
@@ -214,6 +219,7 @@ export default function ClassificationsPage({ type }) {
                               value={editName}
                               onChange={(e) => setEditName(e.target.value)}
                               aria-invalid={editError ? 'true' : undefined}
+                              aria-describedby={editError ? `rename-error-${item.id}` : undefined}
                             />
                             <button type="submit" disabled={pending}>
                               Save
@@ -221,7 +227,11 @@ export default function ClassificationsPage({ type }) {
                             <button type="button" onClick={() => setEditingId(null)} disabled={pending}>
                               Cancel
                             </button>
-                            {editError && <p role="alert">{editError}</p>}
+                            {editError && (
+                              <p role="alert" id={`rename-error-${item.id}`}>
+                                {editError}
+                              </p>
+                            )}
                           </form>
                         ) : (
                           <>

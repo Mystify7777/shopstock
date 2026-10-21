@@ -58,6 +58,42 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Password')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('links each invalid field to the message with aria-describedby, and only the invalid ones', () => {
+    setup();
+    fill('shop', '');
+    submit();
+    const alert = screen.getByRole('alert');
+    expect(alert.id).not.toBe('');
+    expect(screen.getByLabelText('Password')).toHaveAttribute('aria-describedby', alert.id);
+    expect(screen.getByLabelText('Password')).toHaveAccessibleDescription('Enter your username and password.');
+    expect(screen.getByLabelText('Username')).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('drops the flags and the association once the message is cleared by a new attempt', async () => {
+    const { authManager } = setup();
+    fill('shop', '');
+    submit();
+    expect(screen.getByLabelText('Password')).toHaveAttribute('aria-describedby');
+
+    fill('shop', 'secret');
+    submit();
+    await waitFor(() => expect(authManager.login).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Password')).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('a credentials failure is about the attempt, not a field: it is announced but flags no field', async () => {
+    setup({}, vi.fn().mockRejectedValue(new AuthApiError('UNAUTHORIZED', 'x', 401)));
+    fill('shop', 'wrong');
+    submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect username or password.');
+    expect(screen.getByLabelText('Username')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Password')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Username')).not.toHaveAttribute('aria-describedby');
+    expect(screen.getByLabelText('Password')).not.toHaveAttribute('aria-describedby');
+  });
+
   it('only flags the empty field as invalid', () => {
     setup();
     fill('shop', '');

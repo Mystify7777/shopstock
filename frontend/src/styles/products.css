@@ -138,7 +138,7 @@
 .chip__label {
   display: inline-flex;
   align-items: center;
-  min-height: var(--control-height-sm);
+  min-height: var(--touch-target-min);
   padding: 0 var(--space-3);
   background: var(--color-surface);
   color: var(--color-text);

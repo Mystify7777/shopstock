@@ -239,6 +239,12 @@
      viewport bottom the fixed notice and the bottom bar cover), so keyboard
      focus and the last content stay clear of them. Rests at 0. */
   --undo-clearance: 0px;
+
+  /* Runtime values (see hooks/useFixedChromeInsets.js): how much of the top
+     and bottom of the viewport the sticky header and the fixed mobile bar
+     cover. They rest at 0 and feed scroll-padding in shell.css. */
+  --chrome-top: 0px;
+  --chrome-bottom: 0px;
 }
 
 @media (min-width: 48rem) {

@@ -179,7 +179,8 @@ describe('ProductListPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Low Stock Item/)).toBeInTheDocument();
     });
-    expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+    expect(screen.getByText('Low Stock', { selector: '.product-row__status' })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument(); // a label, not a live region (7H)
   });
 
   it('does not render a low-stock indicator for a normal-stock product', async () => {
@@ -382,7 +383,7 @@ describe('ProductListPage', () => {
       await waitFor(() => {
         expect(screen.getByText(/Low Stock Item/)).toBeInTheDocument();
       });
-      expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+      expect(screen.getByText('Low Stock', { selector: '.product-row__status' })).toBeInTheDocument();
     });
 
     describe('related products (Phase 4B)', () => {
@@ -504,7 +505,7 @@ describe('ProductListPage', () => {
         await waitFor(() => {
           expect(screen.getByText(/Low Stock Related/)).toBeInTheDocument();
         });
-        expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+        expect(screen.getByText('Low Stock', { selector: '.product-row__status' })).toBeInTheDocument();
       });
 
       it('renders no Related products section at all when related is empty', async () => {
@@ -1049,6 +1050,7 @@ describe('ProductListPage', () => {
         expect(screen.queryByText('database unavailable')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toHaveAttribute('href', '/');
+        expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toHaveClass('touch-link'); // 7H Slice 3: 44px target
         // header and search are still there
         expect(screen.getByRole('link', { name: 'Add Product' })).toBeInTheDocument();
         expect(screen.getByLabelText('Search')).toBeInTheDocument();

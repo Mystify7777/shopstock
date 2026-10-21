@@ -126,12 +126,9 @@
 
 /* While the notice is shown, ProductDetailPage publishes --undo-clearance:
    how much of the viewport bottom it (and the bottom bar under it) covers.
-   Keyboard focus is scrolled clear of it and the last content can scroll
-   above it. Unset (0px) whenever there is no notice. */
-html {
-  scroll-padding-bottom: var(--undo-clearance);
-}
-
+   The last content can scroll above it (keyboard focus is kept clear of it by
+   the root scroll-padding in shell.css, which also accounts for the header and
+   the bottom bar). 0px whenever there is no notice. */
 .product-detail {
   padding-bottom: var(--undo-clearance);
 }
@@ -311,5 +308,5 @@ p.form-errors {
 
 .history-entry button {
   margin-top: var(--space-2);
-  min-height: var(--control-height-sm);
+  min-height: var(--touch-target-min);
 }

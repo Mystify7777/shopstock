@@ -29,6 +29,30 @@ const REVERSE_FAILED = "We couldn't undo that change. Please try again.";
 const moneyFormat = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const costFormat = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
+// The stock services return plain message strings with no field key, and the
+// domain contract is not changed here, so a message is matched to the field it
+// is about by its leading words. A message that matches no field (for example
+// "Product not found.") belongs to no field: it is about the form as a whole and
+// is announced by the form's alert only. The tests build real messages with the
+// domain factories, so a wording change that breaks this match fails a test.
+function stockErrorField(message) {
+  if (message.startsWith('Quantity')) return 'quantity';
+  if (message.startsWith('Cost per unit')) return 'cost';
+  if (message.startsWith('Purchase date')) return 'purchaseDate';
+  return null;
+}
+
+// The fields a set of messages marks invalid.
+function invalidStockFields(errors) {
+  return new Set(errors.map(stockErrorField).filter(Boolean));
+}
+
+// The ids of the error list items that are about `field` (see the list items'
+// ids below), so a field is described by ITS messages and no one else's.
+function fieldErrorIds(prefix, errors, field) {
+  return errors.flatMap((message, index) => (stockErrorField(message) === field ? [`${prefix}-error-${index}`] : []));
+}
+
 /**
  * Product detail + stock operations page (route /products/:id; the metadata
  * form is /products/:id/edit).
@@ -467,6 +491,9 @@ export default function ProductDetailPage() {
   // Render
   // ---------------------------------------------------------------------------
 
+  const addInvalid = invalidStockFields(addErrors);
+  const removeInvalid = invalidStockFields(removeErrors);
+
   function describedBy(...ids) {
     const present = ids.filter(Boolean);
     return present.length > 0 ? present.join(' ') : undefined;
@@ -577,9 +604,7 @@ export default function ProductDetailPage() {
                 <p className="product-detail__quantity">
                   Quantity: {product.quantity}
                   {lowStock ? (
-                    <span role="status" className={`stock-badge stock-badge--${status === STOCK_STATUS.OUT ? 'out' : 'low'}`}>
-                      {status}
-                    </span>
+                    <span className={`stock-badge stock-badge--${status === STOCK_STATUS.OUT ? 'out' : 'low'}`}>{status}</span>
                   ) : (
                     <span className="stock-badge stock-badge--ok">In stock</span>
                   )}
@@ -646,8 +671,10 @@ export default function ProductDetailPage() {
                 <form id="add-stock-form" ref={addFormRef} className="stock-form" onSubmit={handleAddSubmit}>
                   {addErrors.length > 0 && (
                     <ul role="alert" id="add-form-errors" className="form-errors">
-                      {addErrors.map((message) => (
-                        <li key={message}>{message}</li>
+                      {addErrors.map((message, index) => (
+                        <li key={message} id={`add-form-error-${index}`}>
+                          {message}
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -661,18 +688,20 @@ export default function ProductDetailPage() {
                     <label htmlFor="add-quantity">Quantity</label>
                     <input
                       id="add-quantity"
+                      aria-invalid={addInvalid.has('quantity') || undefined}
                       type="number"
                       step="any"
                       inputMode="decimal"
                       value={addQuantity}
                       onChange={(e) => setAddQuantity(e.target.value)}
-                      aria-describedby={describedBy(addErrors.length > 0 && 'add-form-errors', addSubmitError && 'add-form-submit-error')}
+                      aria-describedby={describedBy(...fieldErrorIds('add-form', addErrors, 'quantity'))}
                     />
                   </div>
                   <div className="stock-form__field">
                     <label htmlFor="add-cost">Cost per unit</label>
                     <input
                       id="add-cost"
+                      aria-invalid={addInvalid.has('cost') || undefined}
                       type="number"
                       step="any"
                       inputMode="decimal"
@@ -681,17 +710,18 @@ export default function ProductDetailPage() {
                         costTouchedRef.current = true;
                         setAddCost(e.target.value);
                       }}
-                      aria-describedby={describedBy(addErrors.length > 0 && 'add-form-errors', addSubmitError && 'add-form-submit-error')}
+                      aria-describedby={describedBy(...fieldErrorIds('add-form', addErrors, 'cost'))}
                     />
                   </div>
                   <div className="stock-form__field">
                     <label htmlFor="add-purchase-date">Purchase date</label>
                     <input
                       id="add-purchase-date"
+                      aria-invalid={addInvalid.has('purchaseDate') || undefined}
                       type="date"
                       value={addPurchaseDate}
                       onChange={(e) => setAddPurchaseDate(e.target.value)}
-                      aria-describedby={describedBy(addErrors.length > 0 && 'add-form-errors', addSubmitError && 'add-form-submit-error')}
+                      aria-describedby={describedBy(...fieldErrorIds('add-form', addErrors, 'purchaseDate'))}
                     />
                   </div>
                   <div className="stock-form__field">
@@ -713,8 +743,10 @@ export default function ProductDetailPage() {
                 <form id="remove-stock-form" ref={removeFormRef} className="stock-form" onSubmit={handleRemoveSubmit}>
                   {removeErrors.length > 0 && (
                     <ul role="alert" id="remove-form-errors" className="form-errors">
-                      {removeErrors.map((message) => (
-                        <li key={message}>{message}</li>
+                      {removeErrors.map((message, index) => (
+                        <li key={message} id={`remove-form-error-${index}`}>
+                          {message}
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -728,12 +760,13 @@ export default function ProductDetailPage() {
                     <label htmlFor="remove-quantity">Quantity</label>
                     <input
                       id="remove-quantity"
+                      aria-invalid={removeInvalid.has('quantity') || undefined}
                       type="number"
                       step="any"
                       inputMode="decimal"
                       value={removeQuantity}
                       onChange={(e) => setRemoveQuantity(e.target.value)}
-                      aria-describedby={describedBy(removeErrors.length > 0 && 'remove-form-errors', removeSubmitError && 'remove-form-submit-error')}
+                      aria-describedby={describedBy(...fieldErrorIds('remove-form', removeErrors, 'quantity'))}
                     />
                   </div>
                   <div className="stock-form__field">

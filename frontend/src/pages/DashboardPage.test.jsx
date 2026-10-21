@@ -384,6 +384,39 @@ describe('DashboardPage', () => {
     });
   });
 
+  // Phase 7H Slice 3. jsdom cannot measure layout, so these pin that every
+  // standalone link carries the shared touch-target class; the CSS contract
+  // behind that class is asserted in styles/touchTargets.test.js, and the real
+  // rendered sizes were measured in a browser, not here.
+  describe('touch targets', () => {
+    it('Add Product is a touch-target link', () => {
+      renderDashboard(makeServices());
+      expect(screen.getByRole('link', { name: 'Add Product' })).toHaveClass('touch-link');
+    });
+
+    it('needs-attention product links and "View all" links are touch-target links', async () => {
+      renderDashboard(makeServices({ products: [product({ name: 'Dettol', quantity: 0 }), product({ name: 'Parle-G', quantity: 3 })] }));
+      const attention = section('Needs attention');
+      await within(attention).findByRole('link', { name: 'Dettol' });
+      const links = within(attention).getAllByRole('link'); // 2 product links + 2 "View all" links
+      expect(links.map((link) => link.textContent)).toEqual(['Dettol', 'View all 1 in Products', 'Parle-G', 'View all 1 in Products']);
+      for (const link of links) expect(link).toHaveClass('touch-link');
+    });
+
+    it('recent-activity product links are touch-target links', async () => {
+      const dettol = product({ name: 'Dettol' });
+      renderDashboard(makeServices({ products: [dettol], events: [event({ productId: dettol.id, type: 'ADD', quantity: 20, appliedQuantity: 20 })] }));
+      expect(await within(section('Recently updated')).findByRole('link', { name: 'Dettol' })).toHaveClass('touch-link');
+    });
+
+    it('the recent-activity row still reads "Product: Added N time" (the larger link did not change the text)', async () => {
+      const dettol = product({ name: 'Dettol' });
+      renderDashboard(makeServices({ products: [dettol], events: [event({ productId: dettol.id, type: 'ADD', quantity: 20, appliedQuantity: 20 })] }));
+      const row = (await within(section('Recently updated')).findByRole('link', { name: 'Dettol' })).closest('li');
+      expect(row.textContent).toMatch(/^Dettol: Added 20 /);
+    });
+  });
+
   describe('search navigation', () => {
     it('navigates to the product list with the (trimmed, encoded) query in the URL', () => {
       renderDashboard(makeServices());

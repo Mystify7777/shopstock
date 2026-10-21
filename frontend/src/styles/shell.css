@@ -14,8 +14,20 @@
  * Frame
  * ------------------------------------------------------------------- */
 
+/* Keyboard focus must not be scrolled underneath the fixed chrome. The heights
+   are measured and published by hooks/useFixedChromeInsets.js (header and
+   mobile bar) and ProductDetailPage (undo notice); this is the one place they
+   become scroll-padding, so competing rules cannot override each other. The
+   notice sits above the bar and its measurement already includes it, so the
+   larger of the two is the clearance. */
+html {
+  scroll-padding-top: var(--chrome-top);
+  scroll-padding-bottom: max(var(--chrome-bottom), var(--undo-clearance));
+}
+
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh; /* progressive: excludes mobile browser toolbars that 100vh counts */
   display: flex;
   flex-direction: column;
 }
@@ -264,6 +276,7 @@
 
 .app-error {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: var(--space-5) var(--gutter);
@@ -315,6 +328,7 @@
 .auth-screen,
 .login {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: var(--space-5) var(--gutter);

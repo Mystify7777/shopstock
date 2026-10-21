@@ -52,12 +52,14 @@ function AttentionGroup({ title, products, count, statusText, filterValue }) {
       <ul>
         {products.slice(0, ATTENTION_ROWS_PER_GROUP).map((product) => (
           <li key={product.id}>
-            <Link to={`/products/${product.id}`}>{productName(product)}</Link>{' '}
+            <Link to={`/products/${product.id}`} className="touch-link">
+              {productName(product)}
+            </Link>{' '}
             <span>{statusText(product)}</span>
           </li>
         ))}
       </ul>
-      <Link to={`/products?stockStatus=${filterValue}`}>
+      <Link to={`/products?stockStatus=${filterValue}`} className="touch-link">
         View all {count} in Products
       </Link>
     </div>
@@ -101,7 +103,9 @@ export default function DashboardPage() {
       <h1>Dashboard</h1>
 
       <p>
-        <Link to="/products/new">Add Product</Link>
+        <Link to="/products/new" className="touch-link">
+          Add Product
+        </Link>
       </p>
 
       <form role="search" onSubmit={handleSearch} className="dashboard__search">
@@ -207,7 +211,10 @@ export default function DashboardPage() {
               <ul>
                 {entries.map((entry) => (
                   <li key={entry.id}>
-                    <Link to={`/products/${entry.productId}`}>{entry.productName}</Link>:{' '}
+                    <Link to={`/products/${entry.productId}`} className="touch-link">
+                      {entry.productName}
+                    </Link>
+                    :{' '}
                     {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
                     {entry.isReversal ? ' (reversal)' : ''}{' '}
                     <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>

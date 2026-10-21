@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { useRouteChange } from '../../hooks/useRouteChange.js';
+import { useFixedChromeInsets } from '../../hooks/useFixedChromeInsets.js';
 import PrimaryNav from './PrimaryNav.jsx';
 import AccountArea from './AccountArea.jsx';
 import SessionNotice from './SessionNotice.jsx';
@@ -27,8 +28,10 @@ import { NAV_ITEMS, MOBILE_BAR_MIN_ITEMS } from './navItems.js';
  */
 export default function AppShell({ navItems = NAV_ITEMS }) {
   const hasBottomBar = navItems.length >= MOBILE_BAR_MIN_ITEMS;
+  const shellRef = useRef(null);
   const mainRef = useRef(null);
   const announcement = useRouteChange(mainRef);
+  useFixedChromeInsets(shellRef);
 
   // Move focus to <main> directly instead of following the #hash: it works
   // the same under any router and does not add a history entry.
@@ -38,7 +41,7 @@ export default function AppShell({ navItems = NAV_ITEMS }) {
   }
 
   return (
-    <div className="app-shell" data-has-bottom-bar={hasBottomBar ? 'true' : 'false'}>
+    <div className="app-shell" ref={shellRef} data-has-bottom-bar={hasBottomBar ? 'true' : 'false'}>
       <a href="#main-content" className="skip-link" onClick={handleSkip}>
         Skip to main content
       </a>

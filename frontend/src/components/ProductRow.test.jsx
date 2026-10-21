@@ -68,25 +68,27 @@ describe('ProductRow', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     });
 
-    it('labels a low-stock product with role="status" and the domain status text', () => {
+    it('labels a low-stock product with the domain status text, as plain text and not a live region', () => {
       renderRow({ ...base, quantity: 3 });
-      expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+      const label = screen.getByText('Low Stock');
+      expect(label).not.toHaveAttribute('role');
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
       expect(screen.queryByText('In stock')).not.toBeInTheDocument();
     });
 
     it('treats quantity equal to the threshold as low (inclusive, per the domain)', () => {
       renderRow({ ...base, quantity: 5 });
-      expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+      expect(screen.getByText('Low Stock')).toBeInTheDocument();
     });
 
     it('labels a zero-quantity product Out of Stock', () => {
       renderRow({ ...base, quantity: 0 });
-      expect(screen.getByRole('status')).toHaveTextContent('Out of Stock');
+      expect(screen.getByText('Out of Stock')).toBeInTheDocument();
     });
 
     it('honors a per-product threshold override', () => {
       renderRow({ ...base, quantity: 8, lowStockThreshold: 10 });
-      expect(screen.getByRole('status')).toHaveTextContent('Low Stock');
+      expect(screen.getByText('Low Stock')).toBeInTheDocument();
     });
 
     it('never flags Low when low-stock warnings are disabled, but zero is still Out', () => {
@@ -96,12 +98,28 @@ describe('ProductRow', () => {
       unmount();
 
       renderRow({ ...base, quantity: 0, lowStockDisabled: true });
-      expect(screen.getByRole('status')).toHaveTextContent('Out of Stock');
+      expect(screen.getByText('Out of Stock')).toBeInTheDocument();
     });
 
     it('puts the status inside the link so it is part of the row\'s accessible name', () => {
       renderRow({ ...base, quantity: 0 });
       expect(screen.getByRole('link', { name: /Parle-G.*Out of Stock/ })).toBeInTheDocument();
+    });
+
+    // A stock level is a state, not an event, so no row announces itself. A
+    // live region per row (nested in a link) would be noise for a whole list.
+    it('a list of low and out-of-stock rows contains no live regions at all', () => {
+      render(
+        <MemoryRouter>
+          <ul>
+            <ProductRow product={{ ...base, id: 'a', quantity: 0 }} />
+            <ProductRow product={{ ...base, id: 'b', quantity: 2 }} />
+            <ProductRow product={{ ...base, id: 'c', quantity: 1 }} />
+          </ul>
+        </MemoryRouter>
+      );
+      expect(screen.getAllByText(/Out of Stock|Low Stock/)).toHaveLength(3);
+      expect(document.querySelectorAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
     });
   });
 
