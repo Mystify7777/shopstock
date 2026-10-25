@@ -311,7 +311,7 @@ export default function ProductListPage() {
     <div className="product-list">
       <div className="product-list__header">
         <h1>Products</h1>
-        <Link to="/products/new" className="product-list__add">
+        <Link to="/products/new" className="primary-action-link">
           Add Product
         </Link>
       </div>
