@@ -411,3 +411,34 @@ html {
 .not-found-state p {
   margin-top: 0;
 }
+
+
+/* ---------------------------------------------------------------------
+ * Shared primary-action link (Phase 7I)
+ * ------------------------------------------------------------------- */
+
+/* Navigation links that are the page's primary action use the same visual
+   hierarchy as primary buttons, while retaining link semantics and a 44px
+   minimum touch target. */
+.primary-action-link {
+  display: inline-flex;
+  align-items: center;
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-4);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-radius: var(--radius-control);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+}
+
+.primary-action-link:hover {
+  background: var(--color-primary-hover);
+  color: var(--color-on-primary);
+}
+
+.primary-action-link:active {
+  background: var(--color-primary-active);
+  color: var(--color-on-primary);
+}
