@@ -66,6 +66,9 @@ describe('ProductFormPage', () => {
       renderCreate(makeMockService());
 
       expect(screen.getByRole('heading', { name: 'Add Product' })).toBeInTheDocument();
+      const save = screen.getByRole('button', { name: 'Save' });
+      expect(save).toHaveClass('primary-action');
+      expect(save.tagName).toBe('BUTTON');
       expect(screen.queryByText('Edit Product')).not.toBeInTheDocument();
       expect(screen.getByLabelText(/name/i)).toHaveValue('');
       expect(screen.getByLabelText(/notes/i)).toHaveValue('');
