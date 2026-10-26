@@ -36,6 +36,7 @@ describe('AppErrorBoundary', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeInTheDocument();
     expect(screen.getByText(/Part of ShopStock stopped working/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload ShopStock' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload ShopStock' })).toHaveClass('primary-action');
     const home = screen.getByRole('link', { name: 'Go to Dashboard' });
     expect(home).toHaveAttribute('href', '/');
   });
