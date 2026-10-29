@@ -194,7 +194,7 @@
 
 .form-errors {
   margin: 0;
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-3);
   background: var(--color-danger-bg);
   color: var(--color-danger-fg);
   border: 1px solid var(--color-danger-border);
@@ -203,8 +203,10 @@
   line-height: var(--line-height-compact);
 }
 
-p.form-errors {
-  padding-left: var(--space-3);
+/* The alert box is a div; the list inside it keeps the bullet indent the old <ul role="alert"> had. */
+.form-errors ul {
+  margin: 0;
+  padding-inline-start: calc(var(--space-5) - var(--space-3));
 }
 
 .over-remove-warning {

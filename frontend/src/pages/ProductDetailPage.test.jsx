@@ -69,6 +69,18 @@ describe('ProductDetailPage', () => {
     expect(screen.getByText('Product list')).toBeInTheDocument();
   });
 
+  // 7H D5: the not-found page had no page-level heading (axe page-has-heading-one).
+  it('the missing-product page has exactly one h1 that names the page, without repeating the alert text', async () => {
+    renderDetail(makeMockProductService({ getProduct: vi.fn().mockResolvedValue(null) }), makeMockStockEventService(), 'missing-id');
+    const alert = await screen.findByRole('alert');
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Product');
+    expect(headings[0]).not.toHaveTextContent('not found'); // the alert states the problem; the heading names the page
+    expect(alert).toHaveTextContent(/^Product not found\.$/); // the alert text is unchanged
+    expect(alert).not.toContainElement(headings[0]); // the heading is not announced as part of the alert
+  });
+
   it('shows a loading state before product resolves', () => {
     const productService = makeMockProductService({
       getProduct: vi.fn(() => new Promise(() => {}))
@@ -785,6 +797,36 @@ describe('ProductDetailPage', () => {
               screen.getByLabelText(label).getAttribute('aria-invalid')
             ])
           );
+
+        // 7H D3: a <ul role="alert"> replaced the list's own role (axe listitem, aria-allowed-role).
+        // The announcement is kept on a container, and the list inside keeps its list semantics.
+        it('announces errors with a div alert that CONTAINS a real list, not a list that is itself an alert', async () => {
+          const errors = realAddErrors({ quantity: 0, costPerUnit: -1 });
+          mount({ stock: { addStock: vi.fn().mockResolvedValue({ event: null, errors }) } });
+          await openAdd();
+          fireEvent.click(screen.getByText('Save'));
+
+          const alert = await screen.findByRole('alert');
+          expect(alert.tagName).toBe('DIV');
+          expect(alert).toHaveAttribute('id', 'add-form-errors');
+          const list = within(alert).getByRole('list'); // still exposed as a list
+          expect(list.tagName).toBe('UL');
+          expect(list).not.toHaveAttribute('role');
+          expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(errors);
+          expect(document.querySelectorAll('ul[role], ol[role]')).toHaveLength(0);
+          expect(screen.getAllByRole('alert')).toHaveLength(1); // announced once
+        });
+
+        it('the remove form announces the same way', async () => {
+          mount({ stock: { removeStock: vi.fn().mockResolvedValue({ event: null, errors: ['Quantity must be greater than 0.'] }) } });
+          await openRemove();
+          fireEvent.click(screen.getByText('Save'));
+          const alert = await screen.findByRole('alert');
+          expect(alert.tagName).toBe('DIV');
+          expect(alert).toHaveAttribute('id', 'remove-form-errors');
+          expect(within(alert).getAllByRole('listitem')).toHaveLength(1);
+          expect(document.querySelectorAll('ul[role], ol[role]')).toHaveLength(0);
+        });
 
         it('flags exactly the fields the real messages are about, and describes each by its OWN message only', async () => {
           const errors = realAddErrors({ quantity: 0, costPerUnit: -1, purchaseDate: '2026-02-31' });

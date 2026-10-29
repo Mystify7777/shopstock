@@ -43,6 +43,7 @@ html {
 
 .app-shell__header-inner {
   display: flex;
+  flex-wrap: wrap; /* with large text the brand and Sign out wrap onto two rows instead of overflowing */
   align-items: center;
   gap: var(--space-4);
   max-width: var(--layout-width-wide);
@@ -171,15 +172,26 @@ html {
     gap: 0;
   }
 
+  /* Tabs share the bar in proportion to their labels and may shrink below the
+     label's width (min-width: 0), because a flex item cannot otherwise get
+     narrower than its longest word and the bar overflows the screen at 320px or
+     with enlarged text. A label that still does not fit wraps (overflow-wrap:
+     anywhere changes the minimum size, unlike break-word) and the bar grows
+     taller instead of clipping. */
   .primary-nav[data-mobile-bar='true'] li {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .primary-nav[data-mobile-bar='true'] .primary-nav__link {
     justify-content: center;
     width: 100%;
     min-height: var(--control-height-lg);
+    padding-inline: var(--space-1);
     border-radius: 0;
+    text-align: center;
+    overflow-wrap: anywhere;
+    hyphens: auto;
   }
 
   /* Keep page content clear of the fixed bar. */
@@ -330,6 +342,10 @@ html {
   min-height: 100vh;
   min-height: 100dvh;
   display: grid;
+  /* An implicit grid column is as wide as its widest unbreakable content, so a large
+     heading widened it past the screen with enlarged text. minmax(0, 1fr) pins it
+     to the available width. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: var(--space-5) var(--gutter);
 }
@@ -350,6 +366,7 @@ html {
 
 .login__card h1 {
   margin-top: 0;
+  overflow-wrap: anywhere; /* last resort: a long word must never escape the card */
 }
 
 .login__field {

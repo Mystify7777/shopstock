@@ -80,7 +80,7 @@ export default function LoginPage({ reason = null, onCancel }) {
   const passwordInvalid = Boolean(error) && password === '';
 
   return (
-    <div className="login">
+    <main className="login">
       <div className="login__card">
         <h1>Sign in to ShopStock</h1>
 
@@ -136,6 +136,6 @@ export default function LoginPage({ reason = null, onCancel }) {
           </div>
         </form>
       </div>
-    </div>
+    </main>
   );
 }

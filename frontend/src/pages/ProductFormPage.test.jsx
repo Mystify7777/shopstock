@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useParams } from 'react-router-dom';
 import ProductFormPage from './ProductFormPage.jsx';
 import { AppProvider } from '../contexts/AppContext.jsx';
@@ -284,6 +284,35 @@ describe('ProductFormPage', () => {
 
       expect(await screen.findByText(/product not found/i)).toBeInTheDocument();
       expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+    });
+
+    // 7H D3: the error list was a <ul role="alert">, which replaces the list's own role.
+    it('announces validation errors with a div alert that contains a real list, and keeps the field link', async () => {
+      const productService = makeMockService({
+        createProduct: vi.fn().mockResolvedValue({ product: { name: '' }, errors: ['Product needs a name or photo.'] })
+      });
+      renderCreate(productService);
+      fireEvent.click(screen.getByText('Save'));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.tagName).toBe('DIV');
+      expect(alert).toHaveAttribute('id', 'product-form-errors');
+      const list = within(alert).getByRole('list');
+      expect(list).not.toHaveAttribute('role');
+      expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Product needs a name or photo.']);
+      expect(document.querySelectorAll('ul[role], ol[role]')).toHaveLength(0);
+      expect(screen.getByLabelText(/name/i).getAttribute('aria-describedby')).toContain('product-form-errors');
+    });
+
+    // 7H D5: the edit form's not-found state had no page-level heading.
+    it('the missing-product state has exactly one h1 naming the page (Edit Product), separate from the alert', async () => {
+      renderEdit(makeMockService({ getProduct: vi.fn().mockResolvedValue(undefined) }), 'missing-id');
+      const alert = await screen.findByRole('alert');
+      const headings = screen.getAllByRole('heading', { level: 1 });
+      expect(headings).toHaveLength(1);
+      expect(headings[0]).toHaveTextContent('Edit Product');
+      expect(alert).toHaveTextContent(/^Product not found\.$/);
+      expect(alert).not.toContainElement(headings[0]);
     });
 
     it('offers a working way back to Products from the not-found state', async () => {

@@ -78,7 +78,10 @@ function EditProduct({ id }) {
         product ? (
           <ProductForm product={product} />
         ) : (
-          <NotFoundState message="Product not found." linkTo="/products" linkLabel="Back to Products" />
+          <>
+            <h1>Edit Product</h1>
+            <NotFoundState message="Product not found." linkTo="/products" linkLabel="Back to Products" />
+          </>
         )
       }
     </ResourceView>
@@ -156,11 +159,13 @@ function ProductForm({ product }) {
 
       <form onSubmit={handleSubmit} noValidate>
         {hasErrors && (
-          <ul role="alert" id="product-form-errors" className="form-errors">
-            {errors.map((message) => (
-              <li key={message}>{message}</li>
-            ))}
-          </ul>
+          <div role="alert" id="product-form-errors" className="form-errors">
+            <ul>
+              {errors.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {saveFailed && (

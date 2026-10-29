@@ -58,6 +58,25 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Password')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  // 7H D4: the login screen had no <main> landmark (axe landmark-one-main / region).
+  it('is one main landmark that contains the heading and the form, and is not nested in another', () => {
+    setup();
+    const mains = screen.getAllByRole('main');
+    expect(mains).toHaveLength(1);
+    expect(mains[0]).toContainElement(screen.getByRole('heading', { level: 1 }));
+    expect(mains[0]).toContainElement(screen.getByLabelText('Username'));
+    expect(mains[0]).toContainElement(screen.getByRole('button', { name: /sign in/i }));
+    expect(mains[0].querySelector('main')).toBeNull();
+    expect(document.querySelectorAll('main')).toHaveLength(1);
+  });
+
+  it('keeps the validation alert inside the main landmark', () => {
+    setup();
+    fill('', '');
+    submit();
+    expect(screen.getByRole('main')).toContainElement(screen.getByRole('alert'));
+  });
+
   it('links each invalid field to the message with aria-describedby, and only the invalid ones', () => {
     setup();
     fill('shop', '');

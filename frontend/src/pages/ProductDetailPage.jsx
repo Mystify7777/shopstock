@@ -550,11 +550,13 @@ export default function ProductDetailPage() {
           </button>
         )}
         {errors && errors.length > 0 && (
-          <ul role="alert" className="form-errors">
-            {errors.map((message) => (
-              <li key={message}>{message}</li>
-            ))}
-          </ul>
+          <div role="alert" className="form-errors">
+            <ul>
+              {errors.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
         )}
       </li>
     );
@@ -574,11 +576,15 @@ export default function ProductDetailPage() {
         {(product) => {
           if (product === null) {
             return (
-              <NotFoundState
-                message="Product not found."
-                linkTo="/products"
-                linkLabel="Back to Products"
-              />
+              <>
+                {/* Names the page; the alert states the problem. Not the same words twice. */}
+                <h1>Product</h1>
+                <NotFoundState
+                  message="Product not found."
+                  linkTo="/products"
+                  linkLabel="Back to Products"
+                />
+              </>
             );
           }
 
@@ -670,13 +676,15 @@ export default function ProductDetailPage() {
               {showAddForm && (
                 <form id="add-stock-form" ref={addFormRef} className="stock-form" onSubmit={handleAddSubmit}>
                   {addErrors.length > 0 && (
-                    <ul role="alert" id="add-form-errors" className="form-errors">
-                      {addErrors.map((message, index) => (
-                        <li key={message} id={`add-form-error-${index}`}>
-                          {message}
-                        </li>
-                      ))}
-                    </ul>
+                    <div role="alert" id="add-form-errors" className="form-errors">
+                      <ul>
+                        {addErrors.map((message, index) => (
+                          <li key={message} id={`add-form-error-${index}`}>
+                            {message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {addSubmitError && (
                     <p role="alert" id="add-form-submit-error" className="form-errors">
@@ -742,13 +750,15 @@ export default function ProductDetailPage() {
               {showRemoveForm && (
                 <form id="remove-stock-form" ref={removeFormRef} className="stock-form" onSubmit={handleRemoveSubmit}>
                   {removeErrors.length > 0 && (
-                    <ul role="alert" id="remove-form-errors" className="form-errors">
-                      {removeErrors.map((message, index) => (
-                        <li key={message} id={`remove-form-error-${index}`}>
-                          {message}
-                        </li>
-                      ))}
-                    </ul>
+                    <div role="alert" id="remove-form-errors" className="form-errors">
+                      <ul>
+                        {removeErrors.map((message, index) => (
+                          <li key={message} id={`remove-form-error-${index}`}>
+                            {message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {removeSubmitError && (
                     <p role="alert" id="remove-form-submit-error" className="form-errors">
