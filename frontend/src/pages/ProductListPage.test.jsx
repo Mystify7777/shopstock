@@ -1007,6 +1007,7 @@ describe('ProductListPage', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'Products' })).toBeInTheDocument();
         const add = screen.getByRole('link', { name: 'Add Product' });
         expect(add).toHaveAttribute('href', '/products/new');
+        expect(add).toHaveClass('primary-action-link');
         fireEvent.click(add);
         expect(await screen.findByText('New product screen')).toBeInTheDocument();
         expect(screen.getByTestId('where').textContent).toBe('/products/new');

@@ -44,6 +44,9 @@ describe('LoginPage', () => {
   it('renders a heading and labelled username/password fields', () => {
     setup();
     expect(screen.getByRole('heading', { name: 'Sign in to ShopStock' })).toBeInTheDocument();
+    const submit = screen.getByRole('button', { name: 'Sign in' });
+    expect(submit).toHaveClass('primary-action');
+    expect(submit.tagName).toBe('BUTTON');
     expect(screen.getByLabelText('Username')).toHaveAttribute('autocomplete', 'username');
     expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password');
     expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'current-password');

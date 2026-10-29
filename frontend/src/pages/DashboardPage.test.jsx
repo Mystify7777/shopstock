@@ -94,6 +94,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Add Product' })).toHaveAttribute('href', '/products/new');
+    expect(screen.getByRole('link', { name: 'Add Product' })).toHaveClass('primary-action-link');
     expect(screen.getByRole('search')).toBeInTheDocument();
     expect(screen.getByLabelText('Search products')).toBeInTheDocument();
   });
