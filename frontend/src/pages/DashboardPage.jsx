@@ -103,7 +103,7 @@ export default function DashboardPage() {
       <h1>Dashboard</h1>
 
       <p>
-        <Link to="/products/new" className="primary-action-link">
+        <Link to="/products/new" className="primary-action-link touch-link">
           Add Product
         </Link>
       </p>

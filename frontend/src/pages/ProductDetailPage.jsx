@@ -741,7 +741,7 @@ export default function ProductDetailPage() {
                       onChange={(e) => setAddComment(e.target.value)}
                     />
                   </div>
-                  <button ref={addSaveRef} type="submit" disabled={addSaving}>
+                  <button ref={addSaveRef} type="submit" className="primary-action" disabled={addSaving}>
                     {addSaving ? 'Saving…' : 'Save'}
                   </button>
                 </form>
@@ -788,7 +788,7 @@ export default function ProductDetailPage() {
                       onChange={(e) => setRemoveComment(e.target.value)}
                     />
                   </div>
-                  <button ref={removeSaveRef} type="submit" disabled={removeSaving}>
+                  <button ref={removeSaveRef} type="submit" className="primary-action" disabled={removeSaving}>
                     {removeSaving ? 'Saving…' : 'Save'}
                   </button>
                 </form>

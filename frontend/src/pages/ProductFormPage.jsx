@@ -211,7 +211,7 @@ function ProductForm({ product }) {
         <div className="product-form__actions">
           <button
             type="submit"
-            className="product-form__submit"
+            className="primary-action"
             disabled={saving}
             aria-describedby={describedBy(saveFailed && 'product-form-save-error')}
           >

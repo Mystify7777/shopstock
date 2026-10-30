@@ -182,6 +182,19 @@ describe('ProductDetailPage', () => {
   // Add Stock
   // ===========================================================================
 
+  // Phase 7I Slice A: the stock forms' Save buttons are primary actions.
+  it.each(['Add Stock', 'Remove Stock'])('%s form Save button uses the shared primary-action class', async (opener) => {
+    const productService = makeMockProductService({ getProduct: vi.fn().mockResolvedValue(SAMPLE_PRODUCT) });
+    renderDetail(productService, makeMockStockEventService());
+
+    await waitFor(() => screen.getByText('Parle-G'));
+    fireEvent.click(screen.getByText(opener));
+
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toHaveAttribute('type', 'submit');
+    expect(save).toHaveClass('primary-action');
+  });
+
   it('Add Stock form submits with entered fields and shows the undo toast', async () => {
     const productService = makeMockProductService({
       getProduct: vi.fn().mockResolvedValue(SAMPLE_PRODUCT)

@@ -125,7 +125,7 @@ export default function LoginPage({ reason = null, onCancel }) {
           )}
 
           <div className="login__actions">
-            <button type="submit" className="login__submit" disabled={submitting}>
+            <button type="submit" className="primary-action" disabled={submitting}>
               {submitting ? 'Signing in\u2026' : 'Sign in'}
             </button>
             {onCancel && (

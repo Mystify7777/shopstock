@@ -28,7 +28,7 @@ function AppErrorFallback() {
           finished saving may be lost.
         </p>
         <div className="app-error__actions">
-          <button type="button" className="app-error__reload" onClick={() => window.location.reload()}>
+          <button type="button" className="primary-action" onClick={() => window.location.reload()}>
             Reload ShopStock
           </button>
           <a href="/" className="app-error__home">
