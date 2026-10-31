@@ -26,7 +26,7 @@ import { createProductChangeEventRouter } from './routes/productChangeEventRoute
  * Build the Express app.
  *
  * @param {{
- *   corsOrigin?: string,
+ *   corsOrigin?: string | string[],
  *   jwtAccessSecret?: string,
  *   jwtAccessExpiresIn?: string,
  *   refreshTokenExpiresInDays?: number

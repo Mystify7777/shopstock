@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateEnv, loadConfig } from '../../src/config/env.js';
+import { validateEnv, loadConfig, parseCorsOrigins } from '../../src/config/env.js';
 
 function completeEnv(overrides = {}) {
   return {
@@ -142,7 +142,7 @@ describe('loadConfig', () => {
       refreshTokenExpiresInDays: 90,
       seedUsername: 'shopowner',
       seedPassword: 'test-password',
-      corsOrigin: 'http://localhost:5173'
+      corsOrigins: ['http://localhost:5173']
     });
   });
 
@@ -175,4 +175,48 @@ describe('loadConfig', () => {
   // process itself. validateEnv() above already covers the underlying
   // missing-variable detection logic that decides whether loadConfig()
   // takes that path.
+});
+
+describe('CORS_ORIGIN allow-list', () => {
+  test('parseCorsOrigins splits on commas, trims whitespace and drops empty entries', () => {
+    assert.deepEqual(
+      parseCorsOrigins(' http://localhost:5173 ,http://localhost:4173,, '),
+      ['http://localhost:5173', 'http://localhost:4173']
+    );
+    assert.deepEqual(parseCorsOrigins(''), []);
+    assert.deepEqual(parseCorsOrigins(undefined), []);
+  });
+
+  test('loadConfig exposes every listed origin as an array', () => {
+    const config = loadConfig(
+      completeEnv({ CORS_ORIGIN: 'http://localhost:5173, http://localhost:4173,https://shop.example.com' })
+    );
+    assert.deepEqual(config.corsOrigins, [
+      'http://localhost:5173',
+      'http://localhost:4173',
+      'https://shop.example.com'
+    ]);
+  });
+
+  test('validateEnv accepts a list of valid origins, with or without a port', () => {
+    const env = completeEnv({ CORS_ORIGIN: 'http://localhost:5173,https://shop.example.com' });
+    assert.deepEqual(validateEnv(env), { ok: true });
+  });
+
+  for (const [label, value] of [
+    ['a trailing slash', 'http://localhost:5173/'],
+    ['a path', 'http://localhost:5173/app'],
+    ['a wildcard', '*'],
+    ['a missing scheme', 'localhost:5173'],
+    ['a non-http scheme', 'ftp://localhost:5173'],
+    ['one bad entry among valid ones', 'http://localhost:5173,http://localhost:4173/'],
+    ['only commas', ',,']
+  ]) {
+    test(`validateEnv rejects ${label}`, () => {
+      const result = validateEnv(completeEnv({ CORS_ORIGIN: value }));
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.invalid, ['CORS_ORIGIN']);
+      assert.deepEqual(result.missing, []);
+    });
+  }
 });

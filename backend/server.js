@@ -20,7 +20,7 @@ async function start() {
   }
 
   const app = createApp({
-    corsOrigin: config.corsOrigin,
+    corsOrigin: config.corsOrigins,
     jwtAccessSecret: config.jwtAccessSecret,
     jwtAccessExpiresIn: config.jwtAccessExpiresIn,
     refreshTokenExpiresInDays: config.refreshTokenExpiresInDays

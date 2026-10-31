@@ -10,6 +10,35 @@
 // is responsible for that, so this module stays trivially testable with
 // plain process.env manipulation and no import-order side effects.
 
+/**
+ * Split CORS_ORIGIN into its allowed origins. The variable is a
+ * comma-separated allow-list (e.g. the dev server and the preview build both
+ * need to be allowed), with surrounding whitespace and empty entries ignored.
+ *
+ * @param {string | undefined} value
+ * @returns {string[]}
+ */
+export function parseCorsOrigins(value) {
+  return String(value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+}
+
+// A CORS origin is exactly scheme://host[:port] -- no path, no trailing
+// slash, no wildcard. Browsers compare the Origin header to the response
+// header byte-for-byte, so an entry like "http://localhost:5173/" would
+// never match and would fail only at request time, in the browser. Reject
+// it at startup instead.
+function isValidCorsOrigin(entry) {
+  try {
+    const url = new URL(entry);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === entry;
+  } catch {
+    return false;
+  }
+}
+
 const REQUIRED_VARS = [
   'MONGODB_URI',
   'JWT_ACCESS_SECRET',
@@ -27,8 +56,10 @@ const REQUIRED_VARS = [
  * or an invalid value downstream. Currently shape-validated:
  *   - REFRESH_TOKEN_EXPIRES_IN_DAYS: must parse as a finite, positive number
  *   - PORT: optional; if present, must parse as a finite, positive integer
+ *   - CORS_ORIGIN: a comma-separated list of one or more origins, each exactly
+ *     scheme://host[:port] (http or https; no path, trailing slash or wildcard)
  *
- * Other required values (MONGODB_URI, JWT secrets, CORS_ORIGIN, etc.) are
+ * Other required values (MONGODB_URI, JWT secrets, etc.) are
  * presence-checked only here -- their shape is validated by whatever
  * actually consumes them (e.g. the Mongo connection module surfacing its
  * own connection error for a malformed URI), not duplicated here.
@@ -50,6 +81,13 @@ export function validateEnv(env = process.env) {
     const parsed = Number(env.REFRESH_TOKEN_EXPIRES_IN_DAYS);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       invalid.push('REFRESH_TOKEN_EXPIRES_IN_DAYS');
+    }
+  }
+
+  if (!missing.includes('CORS_ORIGIN')) {
+    const origins = parseCorsOrigins(env.CORS_ORIGIN);
+    if (origins.length === 0 || !origins.every(isValidCorsOrigin)) {
+      invalid.push('CORS_ORIGIN');
     }
   }
 
@@ -83,7 +121,7 @@ export function validateEnv(env = process.env) {
  *   refreshTokenExpiresInDays: number,
  *   seedUsername: string,
  *   seedPassword: string,
- *   corsOrigin: string
+ *   corsOrigins: string[]
  * }}
  */
 export function loadConfig(env = process.env) {
@@ -115,6 +153,6 @@ export function loadConfig(env = process.env) {
     refreshTokenExpiresInDays: Number(env.REFRESH_TOKEN_EXPIRES_IN_DAYS),
     seedUsername: env.SEED_USERNAME,
     seedPassword: env.SEED_PASSWORD,
-    corsOrigin: env.CORS_ORIGIN
+    corsOrigins: parseCorsOrigins(env.CORS_ORIGIN)
   };
 }

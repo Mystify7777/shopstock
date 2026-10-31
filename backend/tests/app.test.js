@@ -100,4 +100,31 @@ describe('CORS', () => {
     const res = await request(app).get('/api/health').set('Origin', 'http://localhost:5173');
     assert.equal(res.headers['access-control-allow-origin'], 'http://localhost:5173');
   });
+
+  test('createApp() with several origins reflects only the requesting origin, never the whole list', async () => {
+    const app = createApp({ corsOrigin: ['http://localhost:5173', 'http://localhost:4173'] });
+
+    for (const origin of ['http://localhost:5173', 'http://localhost:4173']) {
+      const res = await request(app).get('/api/health').set('Origin', origin);
+      assert.equal(res.headers['access-control-allow-origin'], origin);
+      assert.equal(res.headers.vary?.includes('Origin'), true, 'responses must vary by Origin');
+    }
+  });
+
+  test('createApp() with several origins still refuses an origin that is not listed', async () => {
+    const app = createApp({ corsOrigin: ['http://localhost:5173', 'http://localhost:4173'] });
+    const res = await request(app).get('/api/health').set('Origin', 'http://localhost:9999');
+    assert.equal(res.headers['access-control-allow-origin'], undefined);
+  });
+
+  test('a preflight from the second listed origin is approved for the login request', async () => {
+    const app = createApp({ corsOrigin: ['http://localhost:5173', 'http://localhost:4173'] });
+    const res = await request(app)
+      .options('/api/auth/login')
+      .set('Origin', 'http://localhost:4173')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type');
+    assert.equal(res.status, 204);
+    assert.equal(res.headers['access-control-allow-origin'], 'http://localhost:4173');
+  });
 });
