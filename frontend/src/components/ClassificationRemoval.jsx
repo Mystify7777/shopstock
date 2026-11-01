@@ -100,6 +100,13 @@ export default function ClassificationRemoval({ config, classification, service,
         onRemoved(result);
         return;
       }
+      // The technical detail (the underlying error text) goes to the console
+      // for diagnosis only; the dialog shows fixed, friendly wording.
+      console.error('Classification removal did not finish:', {
+        status: result.status,
+        failures: result.failures,
+        archiveError: result.archiveError
+      });
       setFailure(result);
     } catch (error) {
       console.error('Classification removal failed unexpectedly:', error);
@@ -183,11 +190,10 @@ export default function ClassificationRemoval({ config, classification, service,
           </p>
           <ul>
             {failure.failures.map((item) => (
-              <li key={item.productId}>
-                {item.productName}: {item.message}
-              </li>
+              <li key={item.productId}>{item.productName}: couldn&rsquo;t be updated.</li>
             ))}
           </ul>
+          <p>Try again to finish, or Close to leave things as they are.</p>
         </div>
       )}
 

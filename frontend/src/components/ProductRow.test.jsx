@@ -123,6 +123,17 @@ describe('ProductRow', () => {
     });
   });
 
+  // Phase 7I: a long name is cut with a CSS ellipsis, never by character count,
+  // so the full name stays in the DOM and in the link's accessible name.
+  it('truncates a long name with the shared ellipsis class but keeps the full name accessible', () => {
+    const longName = 'Extra Long Name Premium Imported Whole Grain Basmati Rice Family Pack 25 kg Value Edition';
+    const { container } = renderRow({ ...base, name: longName });
+    const name = container.querySelector('.product-row__name');
+    expect(name).toHaveClass('text-truncate');
+    expect(name.textContent).toBe(longName);
+    expect(screen.getByRole('link', { name: new RegExp(longName) })).toHaveAttribute('href', '/products/p1');
+  });
+
   it('hides the decorative chevron from assistive technology', () => {
     const { container } = renderRow(base);
     expect(container.querySelector('.product-row__chevron')).toHaveAttribute('aria-hidden', 'true');

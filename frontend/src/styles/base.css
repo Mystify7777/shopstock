@@ -158,6 +158,19 @@ textarea:disabled {
   border-color: var(--color-primary-active);
 }
 
+/* Single-line truncation with an ellipsis (Phase 7I). Used for a product name
+   in a row. The full text stays in the DOM, so the accessible name is the full
+   name; the detail page shows it in full. overflow: hidden also lets a flex
+   item shrink below its content width (min-width: auto would otherwise stop
+   it), which is what makes the ellipsis appear inside a flex row. */
+.text-truncate {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .touch-link {
   /* A standalone link that is a tap target in its own right (not a link
      inside a sentence): at least the 44 x 44 touch-target minimum, without

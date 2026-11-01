@@ -47,7 +47,7 @@ export default function ProductRow({ product }) {
   return (
     <li className="product-row">
       <Link to={`/products/${product.id}`} className="product-row__link">
-        <span className="product-row__name">{product.name || 'Unnamed product'}</span>
+        <span className="product-row__name text-truncate">{product.name || 'Unnamed product'}</span>
         <span className="product-row__quantity">{product.quantity}</span>
         <span className={statusClass}>{attention ? status : 'In stock'}</span>
         <span className="product-row__chevron" aria-hidden="true">

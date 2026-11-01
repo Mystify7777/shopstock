@@ -9,6 +9,7 @@ import { createProductRepository } from '../data/repositories/productRepository.
 import { createClassificationRepository } from '../data/repositories/classificationRepository.js';
 import { createProductService } from '../services/productService.js';
 import { createClassificationService } from '../services/classificationService.js';
+import { captureConsoleError } from '../../tests/helpers/captureConsoleError.js';
 
 // Page behavior is tested against a STUBBED classificationService (precise
 // control of every success/failure branch). The service's own behavior has
@@ -439,6 +440,7 @@ describe('ClassificationsPage', () => {
       };
 
       it('says honestly what failed, that the item was NOT removed, and offers Try again / Close', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
         const service = serviceWithPreview(
           { affectedCount: 3, affectedProducts: [product(), product(), product()], archivedAffectedCount: 0 },
           { removeWithFallback: vi.fn().mockResolvedValue(partial) }
@@ -449,7 +451,11 @@ describe('ClassificationsPage', () => {
         const alert = await within(dialog).findByRole('alert');
         expect(alert).toHaveTextContent(/Couldn.t update 1 of 3 products, so .Snacks. was not removed/);
         expect(alert).toHaveTextContent(/already updated stay updated, and nothing was deleted/);
-        expect(within(alert).getByText('Parle-G: disk full')).toBeInTheDocument();
+        // Phase 7I Slice B: fixed friendly wording per product, never the service's raw message.
+        expect(within(alert).getByText('Parle-G: couldn’t be updated.')).toBeInTheDocument();
+        expect(alert).not.toHaveTextContent('disk full');
+        expect(alert).toHaveTextContent('Try again to finish, or Close to leave things as they are.');
+        expect(diagnostic).toHaveBeenCalledTimes(1);
         expect(within(dialog).getByRole('button', { name: 'Try again' })).toBeEnabled();
         expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
         // the dialog stays open and the item is still listed as active
@@ -458,6 +464,7 @@ describe('ClassificationsPage', () => {
       });
 
       it('Try again re-runs the removal and finishes when it now succeeds', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
         const removeWithFallback = vi
           .fn()
           .mockResolvedValueOnce(partial)
@@ -481,9 +488,11 @@ describe('ClassificationsPage', () => {
         expect(await screen.findByText('Removed “Snacks”. 1 product was updated.')).toBeInTheDocument();
         expect(removeWithFallback).toHaveBeenCalledTimes(2);
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(diagnostic).toHaveBeenCalledTimes(1); // only the first, failed attempt
       });
 
       it('Close after a failure dismisses the dialog', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
         const service = serviceWithPreview(
           { affectedCount: 3, affectedProducts: [product()], archivedAffectedCount: 0 },
           { removeWithFallback: vi.fn().mockResolvedValue(partial) }
@@ -492,9 +501,11 @@ describe('ClassificationsPage', () => {
         fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
         fireEvent.click(await within(dialog).findByRole('button', { name: 'Close' }));
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(diagnostic).toHaveBeenCalledTimes(1);
       });
 
       it('explains an archive-only failure', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
         const service = serviceWithPreview(
           { affectedCount: 2, affectedProducts: [product(), product()], archivedAffectedCount: 0 },
           {
@@ -515,6 +526,65 @@ describe('ClassificationsPage', () => {
           /Every product was updated, but .Snacks. couldn.t be archived/
         );
         expect(within(dialog).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+        // The storage error text is logged for diagnosis, never shown.
+        expect(dialog).not.toHaveTextContent('storage unavailable');
+        expect(diagnostic).toHaveBeenCalledWith(
+          'Classification removal did not finish:',
+          expect.objectContaining({ status: 'archive-failed', archiveError: 'storage unavailable' })
+        );
+      });
+
+      it('never shows the underlying error text of a failed product update, and logs it instead', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
+        const technical = 'QuotaExceededError: IndexedDB write failed (store "products")';
+        const service = serviceWithPreview(
+          { affectedCount: 3, affectedProducts: [product(), product(), product()], archivedAffectedCount: 0 },
+          {
+            removeWithFallback: vi.fn().mockResolvedValue({
+              ...partial,
+              failures: [{ productId: 'p2', productName: 'Parle-G', message: technical }]
+            })
+          }
+        );
+        const dialog = await openRemoval(service);
+        fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
+
+        const alert = await within(dialog).findByRole('alert');
+        expect(alert).toHaveTextContent('Parle-G: couldn’t be updated.');
+        expect(dialog).not.toHaveTextContent(/QuotaExceeded|IndexedDB|store "products"/);
+        expect(diagnostic).toHaveBeenCalledTimes(1);
+        expect(diagnostic).toHaveBeenCalledWith(
+          'Classification removal did not finish:',
+          expect.objectContaining({
+            status: 'partial',
+            failures: [expect.objectContaining({ productId: 'p2', message: technical })]
+          })
+        );
+        // Recovery is intact: both ways out are still offered.
+        expect(within(dialog).getByRole('button', { name: 'Try again' })).toBeEnabled();
+        expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+      });
+
+      it('never shows the text of an unexpected thrown error, and Try again still recovers', async () => {
+        const unexpected = captureConsoleError('Classification removal failed unexpectedly:');
+        const removeWithFallback = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('IDBTransaction aborted: TransactionInactiveError'))
+          .mockResolvedValueOnce({ status: 'completed', affectedCount: 1, updatedCount: 1, skippedCount: 0, failures: [], archiveError: null, retryable: false });
+        const service = serviceWithPreview(
+          { affectedCount: 1, affectedProducts: [product()], archivedAffectedCount: 0 },
+          { removeWithFallback }
+        );
+        const dialog = await openRemoval(service);
+        fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${singular}` }));
+
+        expect(await within(dialog).findByRole('alert')).toHaveTextContent(/Something went wrong. Nothing more was changed/);
+        expect(dialog).not.toHaveTextContent(/IDBTransaction|TransactionInactiveError/);
+        expect(unexpected).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }));
+        expect(await screen.findByText('Removed “Snacks”. 1 product was updated.')).toBeInTheDocument();
+        expect(removeWithFallback).toHaveBeenCalledTimes(2);
       });
 
       it('handles an unexpected thrown error without closing, and logs it', async () => {
@@ -669,6 +739,7 @@ describe('ClassificationsPage', () => {
       });
 
       it('after a failed removal focus returns to Close (the confirm button lost it while disabled)', async () => {
+        const diagnostic = captureConsoleError('Classification removal did not finish:');
         const dialog = await openRemoval(serviceWithPreview(preview, { removeWithFallback: vi.fn().mockResolvedValue(partial) }));
         // A keyboard user Tabs from Cancel to the confirm button and activates it.
         const confirm = within(dialog).getByRole('button', { name: `Remove ${singular}` });
@@ -680,6 +751,7 @@ describe('ClassificationsPage', () => {
         // Close is still non-destructive and still returns focus to the invoker.
         fireEvent.click(close);
         await waitFor(() => expect(removeButton()).toHaveFocus());
+        expect(diagnostic).toHaveBeenCalledTimes(1);
       });
 
       it('when the check fails, focus moves to Cancel in the error panel, and Escape closes it', async () => {

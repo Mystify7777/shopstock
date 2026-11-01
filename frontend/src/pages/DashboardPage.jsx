@@ -49,13 +49,13 @@ function AttentionGroup({ title, products, count, statusText, filterValue }) {
       <h3>
         {title} ({count})
       </h3>
-      <ul>
+      <ul className="dashboard__list">
         {products.slice(0, ATTENTION_ROWS_PER_GROUP).map((product) => (
-          <li key={product.id}>
-            <Link to={`/products/${product.id}`} className="touch-link">
-              {productName(product)}
-            </Link>{' '}
-            <span>{statusText(product)}</span>
+          <li key={product.id} className="dashboard__row">
+            <Link to={`/products/${product.id}`} className="touch-link dashboard__row-name">
+              <span className="text-truncate">{productName(product)}</span>
+            </Link>
+            <span className="dashboard__row-detail dashboard__row-detail--nowrap">{statusText(product)}</span>
           </li>
         ))}
       </ul>
@@ -208,16 +208,18 @@ export default function DashboardPage() {
             entries.length === 0 ? (
               <p>No stock activity yet.</p>
             ) : (
-              <ul>
+              <ul className="dashboard__list">
                 {entries.map((entry) => (
-                  <li key={entry.id}>
-                    <Link to={`/products/${entry.productId}`} className="touch-link">
-                      {entry.productName}
+                  <li key={entry.id} className="dashboard__row">
+                    <Link to={`/products/${entry.productId}`} className="touch-link dashboard__row-name">
+                      <span className="text-truncate">{entry.productName}</span>
                     </Link>
-                    :{' '}
-                    {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
-                    {entry.isReversal ? ' (reversal)' : ''}{' '}
-                    <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>
+                    <span className="dashboard__row-detail">
+                      :{' '}
+                      {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
+                      {entry.isReversal ? ' (reversal)' : ''}{' '}
+                      <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>
+                    </span>
                   </li>
                 ))}
               </ul>

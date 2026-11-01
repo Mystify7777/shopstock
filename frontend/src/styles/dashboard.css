@@ -48,6 +48,36 @@
   font-variant-numeric: var(--font-numeric);
 }
 
+/* One product per row: the name (truncated with an ellipsis, see
+   .text-truncate) followed by its status or activity on the same line. The
+   detail never wraps under a long name, so every row has the same shape. */
+.dashboard__list {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.dashboard__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dashboard__row-name {
+  /* No min-width here: .touch-link's 44px minimum must stay in force. */
+  flex: 0 1 auto;
+}
+
+.dashboard__row-detail {
+  flex: 0 1 auto;
+}
+
+.dashboard__row-detail--nowrap {
+  flex: none;
+  white-space: nowrap;
+}
+
 .dashboard__group h3 {
   margin-bottom: var(--space-2);
   font-size: var(--font-size-body);

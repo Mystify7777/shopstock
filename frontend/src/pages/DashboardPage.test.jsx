@@ -418,6 +418,43 @@ describe('DashboardPage', () => {
     });
   });
 
+  // Phase 7I: long names are truncated by CSS only; every attention row has the
+  // same shape (name link, then its status in its own non-wrapping span).
+  describe('long product names (7I)', () => {
+    const longName = 'Extra Long Name Premium Imported Whole Grain Basmati Rice Family Pack 25 kg Value Edition';
+
+    it('an attention row keeps the full name accessible, truncates it by class, and keeps status separate', async () => {
+      const out = product({ name: longName, quantity: 0 });
+      const low = product({ name: 'Parle-G', quantity: 3 });
+      renderDashboard(makeServices({ products: [out, low] }));
+
+      const attention = section('Needs attention');
+      const link = await within(attention).findByRole('link', { name: longName });
+      expect(link).toHaveClass('touch-link');
+      expect(link.querySelector('.text-truncate')?.textContent).toBe(longName);
+
+      // Same shape for a long and a short name: link, then a status span.
+      const rows = within(attention).getAllByRole('listitem');
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row).toHaveClass('dashboard__row');
+        expect(row.children).toHaveLength(2);
+        expect(row.children[0].tagName).toBe('A');
+        expect(row.children[1]).toHaveClass('dashboard__row-detail--nowrap');
+      }
+      expect(rows[0].children[1]).toHaveTextContent('Out of stock');
+      expect(rows[1].children[1]).toHaveTextContent('Low stock (3 left)');
+    });
+
+    it('a recent-activity row keeps the full name accessible and truncates it by class', async () => {
+      const item = product({ name: longName });
+      renderDashboard(makeServices({ products: [item], events: [event({ productId: item.id, type: 'ADD', quantity: 20, appliedQuantity: 20 })] }));
+      const link = await within(section('Recently updated')).findByRole('link', { name: longName });
+      expect(link.querySelector('.text-truncate')?.textContent).toBe(longName);
+      expect(link.closest('li').textContent.startsWith(longName + ': Added 20 ')).toBe(true);
+    });
+  });
+
   describe('search navigation', () => {
     it('navigates to the product list with the (trimmed, encoded) query in the URL', () => {
       renderDashboard(makeServices());

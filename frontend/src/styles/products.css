@@ -201,9 +201,7 @@
 
 .product-row__name {
   flex: 1;
-  min-width: 0;
   font-weight: var(--font-weight-medium);
-  overflow-wrap: anywhere;
 }
 
 .product-row__quantity {
