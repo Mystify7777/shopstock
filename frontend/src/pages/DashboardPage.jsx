@@ -210,14 +210,18 @@ export default function DashboardPage() {
             ) : (
               <ul className="dashboard__list">
                 {entries.map((entry) => (
-                  <li key={entry.id} className="dashboard__row">
+                  <li key={entry.id} className="dashboard__row dashboard__row--stacked">
                     <Link to={`/products/${entry.productId}`} className="touch-link dashboard__row-name">
                       <span className="text-truncate">{entry.productName}</span>
                     </Link>
-                    <span className="dashboard__row-detail">
-                      :{' '}
+                    {/* Title line above, quieter detail line below. The colon is kept for
+                        assistive technology ("Dettol: Added 20 ...") but not shown, and the
+                        visual separator is hidden from it. */}
+                    <span className="dashboard__row-meta">
+                      <span className="visually-hidden">: </span>
                       {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
-                      {entry.isReversal ? ' (reversal)' : ''}{' '}
+                      {entry.isReversal ? ' (reversal)' : ''}
+                      <span aria-hidden="true"> · </span>
                       <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>
                     </span>
                   </li>

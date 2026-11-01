@@ -31,6 +31,15 @@
   overflow-wrap: anywhere;
 }
 
+/* The full name is always shown here, however long. On a phone the page-size
+   heading would run to many lines and push the actions off screen, so it steps
+   down to the section-heading size below the tablet breakpoint. */
+@media (max-width: 47.999rem) {
+  .product-detail__header h1 {
+    font-size: var(--font-size-heading-section);
+  }
+}
+
 /* A navigation link that looks like the app's secondary button. */
 .product-detail__edit {
   display: inline-flex;

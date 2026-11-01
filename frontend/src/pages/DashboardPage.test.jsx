@@ -453,6 +453,35 @@ describe('DashboardPage', () => {
       expect(link.querySelector('.text-truncate')?.textContent).toBe(longName);
       expect(link.closest('li').textContent.startsWith(longName + ': Added 20 ')).toBe(true);
     });
+
+    it('every activity row is two lines: the name link, then a meta line with a hidden colon and a decorative separator', async () => {
+      const short = product({ name: 'Dettol' });
+      const long = product({ name: longName });
+      renderDashboard(
+        makeServices({
+          products: [short, long],
+          events: [
+            event({ productId: short.id, type: 'ADD', quantity: 20, appliedQuantity: 20 }),
+            event({ productId: long.id, type: 'REMOVE', quantity: 3, appliedQuantity: 3 })
+          ]
+        })
+      );
+      const activity = section('Recently updated');
+      await within(activity).findByRole('link', { name: 'Dettol' });
+      const rows = within(activity).getAllByRole('listitem');
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row).toHaveClass('dashboard__row--stacked');
+        expect(row.children).toHaveLength(2);
+        expect(row.children[0].tagName).toBe('A');
+        const meta = row.children[1];
+        expect(meta).toHaveClass('dashboard__row-meta');
+        // The colon is for assistive technology only; the separator is decorative.
+        expect(meta.querySelector('.visually-hidden')?.textContent).toBe(': ');
+        expect(meta.querySelector('[aria-hidden="true"]')?.textContent.trim()).toBe('·');
+        expect(meta.querySelector('time')).not.toBeNull();
+      }
+    });
   });
 
   describe('search navigation', () => {
