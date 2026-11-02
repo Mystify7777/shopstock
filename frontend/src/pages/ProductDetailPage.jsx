@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
 import { useAsyncResource } from '../hooks/useAsyncResource.js';
 import ResourceView from '../components/ResourceView.jsx';
@@ -13,6 +13,7 @@ import {
   formatEntryDate
 } from '../domain/stock/historyDisplay.js';
 import { todayDateOnly } from '../domain/shared/dates.js';
+import { hasAddStockIntent } from '../navigation/addStockIntent.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 
 const UNDO_TOAST_DURATION_MS = 5000;
@@ -92,6 +93,8 @@ function fieldErrorIds(prefix, errors, field) {
 export default function ProductDetailPage() {
   const { productService, stockEventService } = useAppContext();
   const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const productResource = useAsyncResource(
     async () => (await productService.getProduct(id)) ?? null,
@@ -150,6 +153,8 @@ export default function ProductDetailPage() {
   const addFormRef = useRef(null);
   const removeFormRef = useRef(null);
   const addSaveRef = useRef(null);
+  const addQuantityRef = useRef(null);
+  const handledIntentKeyRef = useRef(null); // the location.key whose Add Stock intent was already consumed
   const removeSaveRef = useRef(null);
   const overRemoveRef = useRef(null);
   const overRemoveCancelRef = useRef(null);
@@ -182,12 +187,40 @@ export default function ProductDetailPage() {
     const refs = {
       add: addButtonRef,
       remove: removeButtonRef,
+      addQuantity: addQuantityRef,
       addSave: addSaveRef,
       removeSave: removeSaveRef,
       history: historyHeadingRef
     };
     refs[target]?.current?.focus();
   }, [focusRequest]);
+
+  // Arriving from a dashboard row's "Add stock" link (router state, see
+  // navigation/addStockIntent.js): open the existing Add Stock form for THIS
+  // product and put focus in Quantity. The intent is consumed exactly once:
+  //   - only after the product has settled (loading waits; a missing product or
+  //     a load error never opens a form),
+  //   - guarded by the location key, so a re-render or React Strict Mode's
+  //     second effect run cannot open the form twice,
+  //   - then cleared with a replace-navigation, so a refresh or Back/Forward to
+  //     this entry never re-opens it.
+  // Nothing here changes stock: the form's own Save still goes through
+  // stockEventService.addStock like any other Add Stock.
+  useEffect(() => {
+    if (!hasAddStockIntent(location.state)) return;
+    if (productResource.status === 'loading') return;
+    if (handledIntentKeyRef.current === location.key) return;
+    handledIntentKeyRef.current = location.key;
+
+    if (productResource.status === 'success' && productResource.data) {
+      openAddForm();
+      requestFocus('addQuantity'); // acted on after the render that mounts the form
+    }
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: null }
+    );
+  }, [location, productResource.status, productResource.data]);
 
   // The notice is position: fixed, so on its own it covers content and any
   // keyboard-focused control scrolled underneath it. While it is shown,
@@ -696,6 +729,7 @@ export default function ProductDetailPage() {
                     <label htmlFor="add-quantity">Quantity</label>
                     <input
                       id="add-quantity"
+                      ref={addQuantityRef}
                       aria-invalid={addInvalid.has('quantity') || undefined}
                       type="number"
                       step="any"

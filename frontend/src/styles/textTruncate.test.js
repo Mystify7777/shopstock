@@ -74,3 +74,21 @@ describe('product detail heading on small screens (7I)', () => {
     expect(rule(css, '.product-detail__header h1')).not.toMatch(/font-size/);
   });
 });
+
+describe('attention row second line: status + Add stock (#56)', () => {
+  const dashboard = read('dashboard.css');
+
+  it('is a wrapping flex row that cannot exceed the row width', () => {
+    const body = rule(dashboard, '.dashboard__row-line');
+    expect(body).toMatch(/display:\s*flex/);
+    expect(body).toMatch(/flex-wrap:\s*wrap/);
+    expect(body).toMatch(/max-width:\s*100%/);
+  });
+
+  it('leaves the Add stock link to .touch-link: no size rule that could shrink its 44px target', () => {
+    // The action link only carries the shared .touch-link class; the line rule
+    // sets no height or min-size for it.
+    expect(rule(dashboard, '.dashboard__row-line')).not.toMatch(/(?<![-\w])(min-)?height\s*:/);
+    expect(dashboard).not.toMatch(/\.dashboard__row-line\s+a\b|\.dashboard__row-action/);
+  });
+});

@@ -90,6 +90,17 @@
   max-width: 100%;
 }
 
+/* Second line of an attention row: the status, then the Add stock action. It
+   wraps rather than overflows if a long status ever meets a narrow screen. */
+.dashboard__row-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+  min-width: 0;
+  max-width: 100%;
+}
+
 .dashboard__row-meta {
   color: var(--color-text-muted);
   font-size: var(--font-size-label);

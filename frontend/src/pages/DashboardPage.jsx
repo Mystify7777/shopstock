@@ -5,6 +5,7 @@ import { useAsyncResource } from '../hooks/useAsyncResource.js';
 import ResourceView from '../components/ResourceView.jsx';
 import { summarizeInventory, toActivityEntry } from '../domain/dashboard/dashboardSummary.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
+import { ADD_STOCK_INTENT } from '../navigation/addStockIntent.js';
 
 // Dashboard (Phase 7C, route "/").
 //
@@ -51,11 +52,19 @@ function AttentionGroup({ title, products, count, statusText, filterValue }) {
       </h3>
       <ul className="dashboard__list">
         {products.slice(0, ATTENTION_ROWS_PER_GROUP).map((product) => (
-          <li key={product.id} className="dashboard__row">
+          <li key={product.id} className="dashboard__row dashboard__row--stacked">
             <Link to={`/products/${product.id}`} className="touch-link dashboard__row-name">
               <span className="text-truncate">{productName(product)}</span>
             </Link>
-            <span className="dashboard__row-detail dashboard__row-detail--nowrap">{statusText(product)}</span>
+            <div className="dashboard__row-line">
+              <span className="dashboard__row-detail dashboard__row-detail--nowrap">{statusText(product)}</span>
+              {/* A sibling link, never nested in the name link. It only navigates: the stock
+                  change itself is made (and queued, and undoable) on the product page. The
+                  hidden suffix gives each link a unique name that still contains "Add stock". */}
+              <Link to={`/products/${product.id}`} state={ADD_STOCK_INTENT} className="touch-link">
+                Add stock <span className="visually-hidden">for {productName(product)}</span>
+              </Link>
+            </div>
           </li>
         ))}
       </ul>

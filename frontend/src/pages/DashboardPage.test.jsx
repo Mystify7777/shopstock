@@ -399,8 +399,16 @@ describe('DashboardPage', () => {
       renderDashboard(makeServices({ products: [product({ name: 'Dettol', quantity: 0 }), product({ name: 'Parle-G', quantity: 3 })] }));
       const attention = section('Needs attention');
       await within(attention).findByRole('link', { name: 'Dettol' });
-      const links = within(attention).getAllByRole('link'); // 2 product links + 2 "View all" links
-      expect(links.map((link) => link.textContent)).toEqual(['Dettol', 'View all 1 in Products', 'Parle-G', 'View all 1 in Products']);
+      // per group: the name link, the "Add stock" action, then "View all"
+      const links = within(attention).getAllByRole('link');
+      expect(links.map((link) => link.textContent)).toEqual([
+        'Dettol',
+        'Add stock for Dettol',
+        'View all 1 in Products',
+        'Parle-G',
+        'Add stock for Parle-G',
+        'View all 1 in Products'
+      ]);
       for (const link of links) expect(link).toHaveClass('touch-link');
     });
 
@@ -433,17 +441,22 @@ describe('DashboardPage', () => {
       expect(link).toHaveClass('touch-link');
       expect(link.querySelector('.text-truncate')?.textContent).toBe(longName);
 
-      // Same shape for a long and a short name: link, then a status span.
+      // Same two-line shape for a long and a short name: the name link, then a
+      // line holding the status (non-wrapping) and the Add stock action.
       const rows = within(attention).getAllByRole('listitem');
       expect(rows).toHaveLength(2);
       for (const row of rows) {
-        expect(row).toHaveClass('dashboard__row');
+        expect(row).toHaveClass('dashboard__row', 'dashboard__row--stacked');
         expect(row.children).toHaveLength(2);
         expect(row.children[0].tagName).toBe('A');
-        expect(row.children[1]).toHaveClass('dashboard__row-detail--nowrap');
+        const line = row.children[1];
+        expect(line).toHaveClass('dashboard__row-line');
+        expect(line.children).toHaveLength(2);
+        expect(line.children[0]).toHaveClass('dashboard__row-detail--nowrap');
+        expect(line.children[1].tagName).toBe('A');
       }
-      expect(rows[0].children[1]).toHaveTextContent('Out of stock');
-      expect(rows[1].children[1]).toHaveTextContent('Low stock (3 left)');
+      expect(rows[0].children[1].children[0]).toHaveTextContent('Out of stock');
+      expect(rows[1].children[1].children[0]).toHaveTextContent('Low stock (3 left)');
     });
 
     it('a recent-activity row keeps the full name accessible and truncates it by class', async () => {
@@ -561,6 +574,106 @@ describe('DashboardPage', () => {
           stockStatus: status
         });
       });
+    });
+  });
+
+  // Issue #56: a contextual "Add stock" action on each attention row. It only
+  // NAVIGATES to the product page (with a one-shot router-state intent, tested
+  // against the real product page in addStockIntent.integration.test.jsx); it
+  // never changes stock from the dashboard.
+  describe('contextual Add stock action (#56)', () => {
+    const longName = 'Extra Long Name Premium Imported Whole Grain Basmati Rice Family Pack 25 kg Value Edition';
+
+    function servicesWithStockSpies(data) {
+      const services = makeServices(data);
+      services.stockEventService.addStock = vi.fn();
+      services.stockEventService.removeStock = vi.fn();
+      services.stockEventService.reverseEvent = vi.fn();
+      return services;
+    }
+
+    it('shows one Add stock link per out-of-stock and low-stock row, for that product, with a unique accessible name', async () => {
+      const out = product({ name: 'Dettol', quantity: 0 });
+      const low = product({ name: longName, quantity: 3 });
+      const fine = product({ name: 'Plenty', quantity: 50 });
+      renderDashboard(makeServices({ products: [out, low, fine] }));
+
+      const attention = section('Needs attention');
+      const actions = await within(attention).findAllByRole('link', { name: /^Add stock for / });
+      expect(actions.map((a) => a.getAttribute('href'))).toEqual([`/products/${out.id}`, `/products/${low.id}`]);
+      // Unique names, the full product name even when it is long, visible text still "Add stock".
+      expect(actions.map((a) => a.textContent)).toEqual(['Add stock for Dettol', `Add stock for ${longName}`]);
+      for (const action of actions) {
+        expect(action.textContent.startsWith('Add stock')).toBe(true);
+        expect(action.firstChild.textContent.trim()).toBe('Add stock'); // the visible part
+        expect(action.querySelector('.visually-hidden')).not.toBeNull();
+        expect(action).toHaveClass('touch-link');
+      }
+      // A product that needs no attention gets no row at all, so no action.
+      expect(screen.queryByRole('link', { name: 'Add stock for Plenty' })).not.toBeInTheDocument();
+    });
+
+    it('the action is a sibling of the name link: no link inside a link, and no button inside either', async () => {
+      renderDashboard(makeServices({ products: [product({ name: 'Dettol', quantity: 0 })] }));
+      const attention = section('Needs attention');
+      const name = await within(attention).findByRole('link', { name: 'Dettol' });
+      const action = within(attention).getByRole('link', { name: 'Add stock for Dettol' });
+      expect(name.contains(action)).toBe(false);
+      expect(action.contains(name)).toBe(false);
+      for (const link of [name, action]) {
+        expect(link.querySelector('a, button')).toBeNull();
+        expect(link.closest('a, button')).toBe(link);
+      }
+    });
+
+    it('keeps a logical tab order: each name link, then its action, then the next row', async () => {
+      renderDashboard(
+        makeServices({ products: [product({ name: 'First', quantity: 0 }), product({ name: 'Second', quantity: 0 })] })
+      );
+      const attention = section('Needs attention');
+      await within(attention).findByRole('link', { name: 'First' });
+      const order = within(attention)
+        .getAllByRole('link')
+        .map((link) => link.textContent);
+      expect(order.slice(0, 4)).toEqual(['First', 'Add stock for First', 'Second', 'Add stock for Second']);
+      // All are natively focusable: real anchors with an href, no tabindex tricks.
+      for (const link of within(attention).getAllByRole('link')) {
+        expect(link).toHaveAttribute('href');
+        expect(link).not.toHaveAttribute('tabindex');
+      }
+    });
+
+    it('activity rows get no Add stock action', async () => {
+      const dettol = product({ name: 'Dettol', quantity: 50 });
+      renderDashboard(
+        makeServices({ products: [dettol], events: [event({ productId: dettol.id, type: 'ADD', quantity: 20, appliedQuantity: 20 })] })
+      );
+      const activity = section('Recently updated');
+      await within(activity).findByRole('link', { name: 'Dettol' });
+      expect(within(activity).queryByRole('link', { name: /Add stock/ })).not.toBeInTheDocument();
+    });
+
+    it('clicking it only navigates to the product page, with no query string, and calls no stock service', async () => {
+      const low = product({ name: 'Dettol', quantity: 0 });
+      const services = servicesWithStockSpies({ products: [low] });
+      renderDashboard(services);
+
+      fireEvent.click(await within(section('Needs attention')).findByRole('link', { name: 'Add stock for Dettol' }));
+
+      expect(await screen.findByText('Product detail screen')).toBeInTheDocument();
+      expect(screen.getByTestId('location')).toHaveTextContent(new RegExp(`^/products/${low.id}$`)); // no ?query
+      expect(services.stockEventService.addStock).not.toHaveBeenCalled();
+      expect(services.stockEventService.removeStock).not.toHaveBeenCalled();
+      expect(services.stockEventService.reverseEvent).not.toHaveBeenCalled();
+    });
+
+    it('rendering the dashboard calls no stock-mutating service either', async () => {
+      const services = servicesWithStockSpies({ products: [product({ name: 'Dettol', quantity: 0 })] });
+      renderDashboard(services);
+      await within(section('Needs attention')).findByRole('link', { name: 'Add stock for Dettol' });
+      expect(services.stockEventService.addStock).not.toHaveBeenCalled();
+      expect(services.stockEventService.removeStock).not.toHaveBeenCalled();
+      expect(services.stockEventService.reverseEvent).not.toHaveBeenCalled();
     });
   });
 });
