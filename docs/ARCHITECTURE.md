@@ -1254,6 +1254,79 @@ without a second concrete consumer, not a presentation concern.
   per-entry sync UI are Phase 6 follow-up decisions; the broad accessibility
   pass is 7H and the visual consistency pass is 7I.
 
+### Cross-page navigation intents (Phase 7I)
+
+A **navigation intent** is a one-shot request, carried with a navigation, that
+asks the destination page to start in a particular state. The first and only one
+is **"arrive on this product's page with Add Stock open"**, used by the
+dashboard's contextual *Add stock* link (Issue #56). Before 7I the app had no way
+for one page to open a form on another: the Add Stock form opened only through
+its button's `onClick`, and no page read router state, a hash or a query
+parameter on `/products/:id`.
+
+**Contract.** Module `frontend/src/navigation/addStockIntent.js`:
+
+- `ADD_STOCK_INTENT` is the frozen value `{ openAddStock: true }`.
+- `hasAddStockIntent(state)` is true only for an object whose `openAddStock` is
+  exactly `true`. Anything else (null, `'true'`, `1`, other shapes) is ignored.
+- It is carried as **React Router location state**: `<Link to="/products/:id"
+  state={ADD_STOCK_INTENT}>`.
+
+**Why router state and not the URL.** The action is contextual ("add stock for
+this row"), not a workflow someone should bookmark or share. State leaves no
+query string or hash behind, and a replayed history entry must not reopen a
+form. A query parameter or hash was rejected for exactly those reasons. Router
+state is **navigation state, not a durable URL contract**: it is not
+bookmarkable, and it lives in the browser's `history.state`, so it survives a
+reload of that entry. That is why the consumer must clear it.
+
+**Producer (dashboard).** Each *Needs attention* row (out-of-stock and low-stock
+only) has an *Add stock* `<Link>` as a **sibling** of the name link, never nested
+inside it and never a button inside a link. It only navigates: no handler, and it
+calls no stock service. Its accessible name is "Add stock for <product>" (the
+visible text plus a visually-hidden suffix, with the space in the visible node so
+the computed name does not run words together), so every link is unique and still
+contains its visible text.
+
+**Consumer (`ProductDetailPage`).** One effect consumes the intent, under these
+rules:
+
+1. **Only after the product has settled.** While the product is loading the
+   intent is left untouched. If the product is missing or fails to load, no form
+   opens, but the intent is still cleared.
+2. **Exactly once.** The location key is recorded in a ref; the same location can
+   never open the form twice, whether through a re-render, a product reload after
+   a save, or React Strict Mode.
+3. **Cleared by a replace-navigation** to the same path with `state: null`, so a
+   refresh or Back/Forward to that entry never reopens the form.
+4. **Focus after render.** It calls the existing `openAddForm()` and then asks
+   the page's existing focus-request mechanism to focus the Quantity field, which
+   acts only after the render that mounts the form.
+5. **No new write path.** Nothing here changes stock. The form's Save still goes
+   through `stockEventService.addStock`, so local-first writes, the sync queue,
+   the undo notice and reversal behave exactly as for any other Add Stock.
+
+**Rules for any future intent.**
+
+- Define it in `frontend/src/navigation/` with a strict check; do not read
+  `location.state` ad hoc in pages.
+- A consumer must wait for the data it needs, tolerate that data being missing,
+  clear the intent with a replace-navigation, and guard against a second
+  consumption of the same location.
+- An intent may **open or focus** something; it must not perform a write, and the
+  link that carries it must not be nested inside another interactive element.
+- Test it across the real producer and consumer, with **two entities** (so acting
+  on the wrong one would fail), plus: the missing-entity case, Back/Forward after
+  consumption, and a test that removes the one-shot guard and fails.
+
+**Layering.** The module is presentation-layer only. Domain, repositories, sync
+and auth do not know intents exist.
+
+**Known limits.** An intent reaches only the page it names; the dashboard offers
+it for attention rows only (not activity rows, and not product-list rows); and
+because it is not in the URL, opening the same product in a new tab or sharing
+the link opens the product with the form closed.
+
 ## Assumptions made where the spec was silent
 
 These were flagged before building and we're proceeding with them by

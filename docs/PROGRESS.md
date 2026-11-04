@@ -2802,7 +2802,7 @@ local optimistic state remains stale until some future mechanism
 (explicitly out of 6E's scope) reconciles it. This is stated plainly,
 not implied.
 
-### Proposed implementation decomposition (not yet started)
+### Proposed implementation decomposition (as locked in 6E-0; implementation status: see the note below)
 
 ```
 6E-1a  Product schema — fieldTimestamps addition
@@ -2818,11 +2818,30 @@ not implied.
 6E-3   Regression + documentation closure
 ```
 
-No implementation has started. This entry is the lock; 6E-1 begins only
-on explicit go-ahead.
+> **Status note (added during Phase 7I; it replaces the sentence "No implementation
+> has started. This entry is the lock; 6E-1 begins only on explicit go-ahead.",
+> which described the state when 6E-0 closed and is no longer true).**
+> Implementation evidence now exists in the repository: commit `cd815ea`
+> (2026-09-16, `fieldTimestamps` and the sync entry structure), `eab403e`
+> (2026-09-22, field-level timestamp-based LWW, labelled 6E), `1ef8f58`
+> (2026-09-29, labelled 6F: reversal synchronization contract tests) and
+> `255a831` (2026-09-30, labelled 6G: tracked-field authority rules and
+> integration tests). `fieldTimestamps` / `fieldMutations` appear in the backend
+> Product service and models, the frontend product repository and sync
+> serialization, and the tests `productLwwConcurrency.test.js` (backend) and
+> `syncEndToEnd.test.js` (backend).
+>
+> **This document has no entries for 6E-1 through 6E-3, 6F or 6G, and the
+> decomposition above has not been reconciled against that work.** Which
+> sub-steps were completed, whether 6E-2's cross-boundary scenarios and 6E-3's
+> closure were done, and what the 6F and 6G labels cover are all **unverified**.
+> Phase 6E is therefore **neither marked complete nor described as "not
+> started": its status is UNRECONCILED** and needs a separate pass against the
+> acceptance criteria locked above. The "no pull/reconciliation" statement above
+> is a different matter and remains accurate (see the risks section).
 
 
-## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A, 7B, 7C, 7D, 7E, 7F, 7G complete)
+## Phase 7 — UI/UX polish & rollout readiness — IN PROGRESS (7A–7G complete; 7H implemented, acceptance verified in emulation with limits; 7I implemented in slices, completion not declared)
 
 > Naming note: this heading previously read "Dashboard + classification
 > management UI". The Phase 7 issue roadmap (#17–#25, 7A–7I) is the
@@ -3237,7 +3256,289 @@ threshold, the unavailable state (not idle, cleared only by a real reading,
 below offline, above attention, no stale counts, not hidden by the indicator),
 and the removal of raw error text.
 
+**Browser verification (recorded during 7I, 2026-10-31 to 2026-11-02, preview
+build in Chrome/Brave device emulation).** The offline indicator appears and its
+wording is understandable; going back online syncs and the indicator clears;
+reloading while offline still opens the app with its data; signing out with
+unsynced changes and signing back in pushes the pending changes (consistent with
+the "no drain after a local mutation" decision above: the queue drains at
+startup, on `online` and on login). A headless Chromium run against a mocked
+backend that answers every sync request with 503 showed the Pending banner
+counting queued events (10 after seeding four products). **The two remaining states were
+exercised later (H):** with the mocked backend answering every sync request with
+a permanent 422, a reload shows "Needs attention 79 changes couldn't be synced."
+and none of the server's own error text; with the queue read forced to fail
+(IndexedDB fault injection), the indicator reads "Sync status unavailable.
+Changes are still saved on this device." (An injected `AbortError` did not surface
+this state because Dexie's live query retries on it; that was an artifact of the
+injection, not app behavior, and an `UnknownError` was used instead.)
+
+
+### Phase 7H (#24) — Responsive layout and accessibility — ✅ IMPLEMENTED; acceptance verified in emulation (limits below)
+
+> **Provenance.** No PROGRESS entry was written when 7H landed. This entry is
+> reconstructed from the commit history (`d0e0767` to `99b0ef3`, 2026-10-10 to
+> 2026-10-29), the changed files, the test files, and the manual browser checks
+> recorded under 7I. It states what the code and tests show, not intentions.
+
+Frontend only; no backend, domain, service, repository, sync or auth change.
+
+**Built (from the commits and files):**
+- App shell accessibility and navigation semantics; route-aware document titles
+  (`routeTitle`, `useDocumentTitle`, `documentTitleRegistry`) and a route-change
+  hook (`useRouteChange`).
+- A top-level `AppErrorBoundary` with a recoverable fallback ("Reload ShopStock",
+  "Go to Dashboard"), later hardened against hostile error objects.
+- Focus management on the Product detail page (stock forms, undo, reversal) and
+  in the classification dialogs (Escape, focus return), plus Login and Product
+  detail validation feedback.
+- Fixed-chrome clearance: `useFixedChromeInsets`, undo-notice clearance, viewport
+  tokens and root scroll-padding, so focused content and the undo notice clear
+  the header and bottom navigation.
+- Touch targets: `.touch-link` for standalone links (44px minimum) and the
+  `ProductRow` changes.
+- Reflow at 320px and with enlarged text: bottom navigation, header and login
+  card.
+
+**Automated coverage (jsdom CSS-contract tests in `styles/`):** `touchTargets`,
+`responsiveReflow`, `viewportClearance`, and `tokens` (WCAG AA contrast and
+`prefers-reduced-motion`). **These pin rules; they do not prove rendered layout.**
+Rendered behavior is verified only by the browser checks below.
+
+**Acceptance against Issue #24** (kept separate from #25; evidence: **U** = manual
+browser checks by the project owner, **H** = headless Chromium run by Claude on a
+mocked backend, **T** = automated tests, **S** = source inspection):
+
+| Area | Status | Evidence |
+|---|---|---|
+| Responsive across phone, tablet, desktop | PASS (emulated viewports) | U/H: dashboard, product list, product detail, login, error fallback (320-1280px). H, added: product form (new and edit), Add and Remove Stock forms and the product list with filters at 320 and 375px; the same screens plus the dashboard and classification screens at 768 and 1280px. No real devices. |
+| No horizontal scroll or clipping | PASS | U: none at the widths checked. H: none on the product form, edit form, Add/Remove Stock forms, list, classification and detail screens at 320 and 375px, nor on those screens plus the dashboard at 768 and 1280px. One 375px clip of the error fallback card was reported once as a **historical observation**; it was **not reproducible** in a forced-error run at 320-600px (card inset 16px each side, no scroll), including a load-wide-then-shrink resize. Cause unknown; it is not treated as evidence of a persistent defect. |
+| Touch targets, filters, navigation not dominating the phone | PASS | T, U. H audit at 320/375px (and 768px for the screens listed above): every button, input and link on the product form, edit form, Add/Remove Stock forms, product list with filters and the Tags screen is at least 44x44px; filter chips are 44px high. |
+| No fixed-height panels, no dense tables | PASS | S: no `<table>`; only a 1px utility and one `height: 100%`. |
+| Headings, labels, names | PASS within these limits | U: the owner's check offered a screen reader or the browser accessibility tree and did not record which was used; Lighthouse accessibility audit (scores not recorded). H: browser accessibility-tree inspection, which gives the dashboard links unique names. **No real screen-reader verification is claimed.** |
+| Keyboard, visible focus, tab order, dialog focus, Escape | PASS | U; H for the dashboard-to-Add-Stock keyboard flow. |
+| Contrast | PASS | T (token contrast); U (Lighthouse). |
+| No colour-only meaning | PASS | U: status pills carry text. |
+| Reduced motion | PASS | T/S: `prefers-reduced-motion` block in `tokens.css`. |
+| Hover, active, disabled states | PASS | U (primary buttons). |
+| Validation/error styling, pressed/selected, layout jumps | PASS (H), with one gap | Product form with no name or photo: a `role=alert` message with `aria-invalid` and `aria-describedby` on the field, inside the viewport at 320px. Add Stock with empty or zero quantity: an alert. Removing more than is available: the warning "Only N units are currently available. Remove M anyway?" (naming the real amounts) with Cancel and Continue. Filter chips are native checkboxes: they toggle, the selected chip differs in background and border colour, and a 2px focus outline shows. Navigation marks the current page with `aria-current` at 375, 768 and 1280px. Cumulative layout shift on load is 0 on the dashboard, product list, product detail and classification screens. A synthetic click that opens the Add Stock form measured 0.07 (content below moves down by design); browsers exclude shifts that follow real user input, so this is not a load-time defect. **Not assessed:** where focus lands after a validation error (the test clicks were synthetic). |
+| Link audit | PASS | S: every internal target matches a route; no dead hrefs. U: nav, back link, "Reload ShopStock" and "Go to Dashboard" work. |
+| Fallbacks: unknown route, empty data, offline, auth required, unexpected UI failure | PASS | U (and H for the forced error). |
+| Fallbacks: missing product, history failure, save failure | PASS (H) | Missing product (also its edit route): "Product not found." alert with a Back to Products link. History failure (stock-event reads forced to fail): the product still shows and a history-specific alert with Try again recovers it. Stock save failure: "We couldn't save that stock change. What you entered is still here...", the form stays open with the typed quantity, and saving again after the fault clears succeeds. Product form save failure: the name is kept; same recovery. No raw error text appeared in any of them. |
+| Fallbacks: search failure, list failure, sync failure | PASS (H) | List failure: "Couldn't load your products." with Try again, which recovers. Search failure: "Couldn't run that search. Your search and filters are kept." with Try again, which returns the results and keeps the query. Permanent sync rejection and an unreadable queue: see the 7G addendum. |
+| Component tests plus manual viewport verification | PASS (emulated viewports) | T (2092 frontend tests at `e2b2c73`); U and H as above. |
+| No business-functionality change | PASS | S. |
+
+**Method and limits of the headless runs (H).** Headless Chromium 153 driven by
+Claude against a mocked backend (same-origin `/api/*` answered by the test
+harness), on a profile seeded through the real UI. Failures were produced by
+forcing IndexedDB `objectStore` access to throw for a chosen store and mode, and
+permanent sync rejection by answering 422. These are emulated viewports and
+synthetic clicks, **not real devices or a real screen reader**. The test data
+contains some mangled item names from a harness text-entry bug; they are test
+data, not app behavior. The scripts are not committed.
+
+Phase 7H's acceptance rows are now all PASS **within those limits**. Still not
+covered: real devices, a real screen reader, recorded Lighthouse scores (reported
+as passing by the owner, numbers not captured) and focus handling after a
+validation error. Whether that is enough to call 7H complete is the owner's
+decision.
+
+
+### Phase 7I (#25) — Final visual consistency and rollout-readiness audit — 🟡 IN PROGRESS (slices A-D and #56 implemented; acceptance NOT closed)
+
+Frontend only, except one adjacent backend change (CORS, below). No domain, API
+contract, sync, auth or persistence behavior changed by any UI slice.
+
+**Method.** Slice 1 was a read-only audit (findings F-01 to F-09, later N-01 to
+N-07). Evidence is labelled **U** (manual browser checks by the project owner on
+the preview build, 2026-10-31 to 2026-11-02), **H** (headless Chromium driven by
+Claude against a mocked backend; not a real device), **T** (automated tests) and
+**S** (source inspection). Passing tests were never treated as browser evidence.
+
+**Delivered (all on `master`):**
+
+| Commit | Change |
+|---|---|
+| `5224de1`..`25db0b4` (PR #48) | Shared `.primary-action-link` for the Dashboard and Products "Add Product" links. |
+| `fc0efdb` | Shared `.primary-action` button class replacing three one-off rules (login, product form, error fallback); Add/Remove Stock Save buttons now primary. Closes F-01, F-02, F-03. |
+| `0e2edf1` | **Backend, outside the frontend-only 7I rule:** `CORS_ORIGIN` is now a validated comma-separated allow-list (`corsOrigins: string[]`), so the dev server and the preview build can both be allowed. Closes N-01. |
+| `e63a88c` | Classification-removal failures no longer show raw error text (fixed wording per product, technical detail to `console.error`); long product names truncate with a shared `.text-truncate` ellipsis (CSS, not a character cut; the full name stays in the DOM and the accessible name); dashboard attention rows made consistent. Closes F-05, N-03. |
+| `ec83096` | "Recently updated" rows are two lines (name, then a quiet detail line; the colon is visually hidden but kept for assistive technology); the product detail heading steps down below 48rem. Closes N-05. |
+| `e2b2c73` | Contextual **Add stock** link on each out-of-stock and low-stock dashboard row (#56): see the decision below. |
+
+**Findings ledger.**
+- F-04 (destructive styling): **not applicable.** Removal, archive and stock
+  removal are all recoverable and no permanent-delete control exists, so red
+  styling would imply an irreversibility the app lacks. No `.danger-action` was
+  added. **Visual hierarchy, assessed in a rendered view (H, 320 and
+  1280px):** the removal confirmation is an inline card in the list (not a modal);
+  Cancel and "Remove category" are identical in style (both default secondary
+  buttons, 44px high, same weight and colour). There is **no evidence this
+  confuses users**, so no change is recommended; making them differ is an owner
+  decision, and a destructive colour would still be wrong because the action is
+  recoverable. At 320px the two buttons wrap and the second appears to start
+  slightly to the right of the first (visual observation, not measured).
+- F-06: `ResourceView`'s `showDetail` option is unused (kept, tested): latent only.
+- F-07 (reload flash after a mutation): **not applicable by source**; reloads keep
+  the previous data and set `isReloading`.
+- F-09 (toast placement, validation layout): toast placement and focus verified
+  (U); validation layout verified (H). F-08 (secondary button drift): not
+  assessed.
+- N-02 (manifest icons): `public/icons/` is empty and the preview serves
+  `index.html` for the icon URLs, so PWA install and the manifest icon fail.
+  **Open (Phase 8 candidate).**
+- N-04 (product form): see the risks section below.
+- N-06: on wide screens the header column is wider than the content column, so
+  their left edges do not align (`--layout-width-wide` vs `--layout-width-content`).
+  P3, **open**, design call.
+- N-07: error-fallback card clip at 375px: **not reproducible** (see 7H).
+- N-08: classification item rows have no consistent shape. The name, Rename,
+  Archive and Remove flow inline, so the buttons' left edges vary with name length
+  at every width (Tags screen: Rename starts at three different x positions at
+  320, 375, 768 and 1280px; at phone widths row heights vary, 88px and 112px).
+  Functional, no overflow, touch targets pass. P3, **open**, not changed; a
+  candidate for the two-line row pattern used on the dashboard.
+
+**Decision: Add stock navigation intent (#56).** Opening Add Stock for a specific
+product from the dashboard needed a navigation contract the app did not have: the
+Add Stock form opened only through a button's `onClick`, and no page read router
+state, a hash or a query parameter. The chosen contract is **React Router
+location state** `{ openAddStock: true }` (module `navigation/addStockIntent.js`):
+not a URL parameter, so it leaves no query string or hash and is not a bookmarkable
+workflow. The product page consumes it **once**: only after the product has
+loaded (a missing product or a load error opens no form), guarded by the location
+key, then cleared with a replace-navigation so refresh and Back/Forward never
+reopen the form; focus moves to Quantity after the form renders. The link only
+navigates. The stock change is still made, queued and undoable through the
+existing `stockEventService.addStock` path. The link is a sibling of the name link
+(never nested), with a unique accessible name ("Add stock for <product>") that
+still contains the visible text.
+
+**Not done (explicitly):** no destructive-action class, no dark mode, no
+notification framework, no change to sync triggers, no product-list Add Stock
+action, no stock picker on the dashboard, no change to the sync, auth or domain
+layers.
+
+**Verification at `e2b2c73` (this sandbox):** frontend 71 files / 2092 tests
+passing; `vite build` passes; backend Mongo-free set (8 of 19 files) 94 tests
+passing. **The 11 Mongo-dependent backend files cannot run here (no MongoDB
+binary) and must be run locally; they were not run for this entry.** Mutation
+checks covered each #56 constraint (focus request, state clearing, load wait, the
+link carrying the state, the unique name suffix, and the one-shot guard, which
+first escaped its test and got a dedicated one). A test also caught a real
+accessible-name defect ("Add stockfor Dettol" when the space sat inside the hidden
+span).
+
+**Browser verification (H, 320/375/768/1280px):** no horizontal scroll; every
+attention row inside the viewport, equal height (88px), name above and status plus
+action on one line; action links 79x44px; Tab order name, action, "View all" per
+row; Enter on the Parle-G link opens Parle-G with the form open and focus in
+Quantity, no query or hash, `history.state` cleared; arriving queued no stock
+event, saving queued exactly one; Back then Forward does not reopen the form; the
+name link arrives with the form closed; the whole flow works offline; Undo creates
+a compensating reversal and preserves the original. **U:** Slice C and D layouts at
+320-816px, the login network-failure message, and the items listed under 7G and 7H.
+
+**Acceptance against Issue #25:**
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Consistent primary, secondary and status presentation; shared primary action | PASS | T, U. |
+| Long names and dashboard rows do not break layout | PASS | U (dashboard, list, detail), H. |
+| Login network failure is not shown as invalid credentials | PASS | U ("Can't reach the server..."). |
+| Friendly classification-removal error | PASS | T (`e63a88c`). H: the actual F-05 path, a product update failing during a removal, was exercised in a real browser by seeding a product's `categoryId` directly in IndexedDB (the UI cannot assign one yet) and forcing that product write to fail: the dialog lists "Parle-G: couldn't be updated." with the fixed wording, no underlying error text, the detail goes to the console, and Try again finishes the removal once the fault clears. |
+| Loading feedback clear without animation | PASS | S: every call site has a specific message. The owner finds it plain: a preference, not a defect. |
+| Dashboard Add Stock action (#56) | PASS (implemented and verified as above) | T, H. |
+| Failure states have useful recovery | PASS | U/H: error fallback; H: list, search, history, stock save, product save, permanent sync rejection and unreadable-queue states, missing product and unknown route each show a clear message and a working way forward. |
+| No dead links or placeholders | PASS | S. |
+| Offline, sync and auth states understandable | PASS | U. |
+| Notifications consistent | PASS | U: the stock Undo notice. H (headless Chromium, 375px): on all four classification screens, add, rename, archive and restore each show exactly one `role=status` notice, as do removals on categories, locations and tags (units offer no Remove), at the same position (a fixed offset below the form) on every screen and for every action. The removal notice was exercised **without** any assigned products, so it does not depend on classification assignment. The affected-products wording ("Removed “X”. 1 product was updated.") was also seen, but only by seeding a product's `categoryId` directly in IndexedDB; it cannot be reached through the UI because nothing can be assigned yet. |
+| Responsive and accessibility checks | PASS (emulated viewports) | See 7H. |
+| Frontend tests pass | PASS | 71 files / 2092 at `e2b2c73`. |
+| Backend regression green | PARTIAL | Mongo-free set passes; Mongo-dependent files must run locally. |
+| No domain, sync or auth change from UI work | PASS | S. |
+| `docs/PROGRESS.md` updated for 7G, 7H, 7I | PASS (this entry) | |
+
+**Phase 7 is not declared complete.** The acceptance rows are now PASS within
+the stated limits, but these remain open or unwaived: backend verification (the
+11 Mongo-dependent files must run locally); real devices and a real screen reader
+not tested; Lighthouse numbers not recorded; N-02, N-06 and N-08; and the
+product-level risks below. Completion is the owner's decision once each is
+resolved or explicitly waived.
+
+**Browser verification, second pass (H, 2026-11-03).** Classification screens
+(categories, locations, tags, units): add, rename, archive, restore and remove
+with one notice each at the same position; the removal dialog opens, Escape closes
+it and returns focus to the Remove button that opened it; a forced archive failure
+shows "...couldn't be archived. Try again to finish." with no raw error text, the
+technical detail goes to the console, and Try again completes the removal once the
+fault clears. **That is an archive failure, adjacent to F-05, not the F-05
+path itself** (the archive error text was never rendered, before or after the
+fix). The F-05 path, a product update failing during removal, was exercised
+separately on a seeded product; see the acceptance row. Plus the
+validation, chip, fallback, sync-state, phone-width and tablet/desktop results in
+the 7H table.
+
+**Observations (not changed).** The product page renders "Quantity: N" with the
+status badge directly after it and no whitespace in the DOM (spaced visually by
+CSS), so a screen reader may read "4Low Stock" as one word (P3, unverified with a
+real screen reader). Browser API calls took about 2 seconds each against the
+developer's backend in one session (cause unknown; not investigated; the app
+is local-first so the UI does not wait on them). The dashboard's "Go to Dashboard"
+fallback link is a plain anchor (full reload). Archived products on the product
+detail page have no special handling.
+
+
+## Open product-level risks and phase decisions (not part of Phase 7)
+
+These were found or confirmed during 7I. **None is implemented or scoped here;
+each needs an explicit decision.**
+
+1. **No pull / reconciliation: a new device sees an empty shop.** Confirmed from
+   three sources: Phase 6E states "ShopStock has no pull/reconciliation mechanism
+   today" (above); the frontend sends only `PUT` sync requests and never fetches
+   remote data (no `GET` anywhere in `data/sync` or `auth`); and a fresh browser
+   profile that signed in to an account with eight products showed "No products
+   yet" on the dashboard. Consequences: a second phone or family member's device
+   starts empty; clearing browser storage loses local data that the server holds
+   but the app cannot restore; this conflicts with the intent of PRD §34-35 (a new
+   device authenticates, then accesses the shop data). **Decision needed:** a
+   separate phase for pull / initial sync and reconciliation, ahead of or inside
+   Phase 8. Do not fold it into UI work. The project owner tracks inbound sync as GitHub
+   issue #39 (high priority); its text was not available when this entry was
+   written.
+2. **Product-form completeness is unscheduled.** 7F deliberately limited the form
+   to name and notes. Nothing currently owns classification pickers, unit, selling
+   price and margin, low-stock threshold, photo upload/capture and initial
+   quantity. Consequences seen in testing: classifications can be created but
+   never assigned (so removal and archive dialogs only ever affect zero products,
+   the removal path that updates assigned products cannot be reached through the UI
+   (it was exercised only by seeding data directly),
+   and the list filters cannot be exercised with real data); every new product
+   shows as Out of stock until stock is added; no price or profit totals are
+   possible. **Decision needed:** a new phase (for example 7J) or an insertion
+   before Phase 8.
+3. **Phase 6E is UNRECONCILED.** The section described the LWW work as "not
+   yet started", but `fieldTimestamps` / `fieldMutations` code and commits
+   labelled 6E, 6F and 6G (2026-09-16 to 2026-09-30) are in the repository, and
+   this document has no entries for 6E-1 onward. The false sentence was replaced
+   with a status note (see the 6E section); completion was **not** assumed:
+   whether 6E-2, 6E-3, 6F and 6G met their acceptance criteria is unverified.
+   It needs a separate reconciliation pass against the commits and tests.
+4. **Deployment configuration is partly undocumented.** The backend's
+   `CORS_ORIGIN` contract is documented in `backend/.env.example`; there is no
+   frontend `.env.example` for `VITE_API_BASE_URL`, and the repo has no deployment
+   or CI configuration.
+
 ## Phase 8 — Export + PWA polish + hardening — NOT STARTED
+
+> Candidate items surfaced during 7I. **Not scoped and not committed to;** listed
+> so they are not lost: real PWA icons and the manifest `theme-color` (N-02);
+> verifying the service-worker update flow; an explicit decision on dark mode
+> (a documented 7A non-goal); optional loading-state polish; recording Lighthouse
+> scores; login ergonomics (autofill hints, show-password); and an earlier JSON
+> export, since there is no backup path while pull is absent (risk 1).
 
 ---
 
