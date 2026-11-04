@@ -118,6 +118,8 @@ describe('tokens.css: required coverage (Issue #17)', () => {
     '--font-size-label',
     '--font-size-helper',
     '--font-size-error',
+    '--font-size-quantity',
+    '--font-size-display',
     '--font-weight-regular',
     '--font-weight-bold',
     '--line-height-body',
@@ -376,6 +378,35 @@ describe('tokens.css: WCAG AA contrast', () => {
     });
     it('selected foreground on selected background >= 4.5:1', () => {
       expect(contrast('--color-selected-fg', '--color-selected-bg')).toBeGreaterThanOrEqual(AA_TEXT);
+    });
+  });
+
+  describe('redesign R1 variants', () => {
+    it.each(SURFACES)('quiet button text (primary-active) on %s >= 4.5:1', (bg) => {
+      expect(contrast('--color-primary-active', bg)).toBeGreaterThanOrEqual(AA_TEXT);
+    });
+    // The backgrounds the base button hover/active rules apply (pinned to the
+    // rules themselves in designFoundations.test.js).
+    it.each(['--color-surface-hover', '--color-surface-active'])(
+      'quiet button text on its hover/active background %s >= 4.5:1',
+      (bg) => {
+        expect(SURFACES).toContain(bg);
+        expect(contrast('--color-primary-active', bg)).toBeGreaterThanOrEqual(AA_TEXT);
+      },
+    );
+    it.each(['--color-danger', '--color-danger-fg'])('danger button: inverse text on %s >= 4.5:1', (bg) => {
+      expect(contrast('--color-text-inverse', bg)).toBeGreaterThanOrEqual(AA_TEXT);
+    });
+    it.each(['info', 'warning', 'danger'])('notice %s: accent edge on its tinted bg >= 3:1', (s) => {
+      expect(contrast(`--color-${s}`, `--color-${s}-bg`)).toBeGreaterThanOrEqual(AA_UI);
+    });
+    it.each(['stock-low', 'stock-out'])('badge %s: fg on tinted bg >= 4.5:1', (s) => {
+      expect(contrast(`--color-${s}-fg`, `--color-${s}-bg`)).toBeGreaterThanOrEqual(AA_TEXT);
+    });
+    it('badge ok: secondary text on page, surface and row hover >= 4.5:1', () => {
+      for (const bg of ['--color-page', '--color-surface', '--color-surface-hover']) {
+        expect(contrast('--color-text-secondary', bg)).toBeGreaterThanOrEqual(AA_TEXT);
+      }
     });
   });
 

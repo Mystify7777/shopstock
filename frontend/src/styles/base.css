@@ -158,6 +158,105 @@ textarea:disabled {
   border-color: var(--color-primary-active);
 }
 
+/* ---------------------------------------------------------------------
+ * Shared variants (redesign R1). Each has a named consumer slice; nothing
+ * here restyles an existing screen by itself. Sizing, focus ring and the
+ * disabled look come from the base `button` rules, as for .primary-action.
+ * ------------------------------------------------------------------- */
+
+/* Quiet button: text-only, for secondary actions that should not compete with
+   the primary one. Consumers: Reverse / Edit (R6), Cancel (R7), Rename (R8).
+   The border stays (transparent) so the box is the same size as any button.
+   Hover and active backgrounds come from the base button rules. The text
+   color is the darkest primary so it stays >= 4.5:1 on every surface those
+   backgrounds use (tokens.test.js). */
+.quiet-action {
+  background: transparent;
+  color: var(--color-primary-active);
+  border-color: transparent;
+}
+
+/* Danger button: filled, for a confirmed destructive action. Consumer: the
+   removal confirmation (R8). Hover/active use the darkest danger tone. */
+.danger-action {
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
+  border-color: var(--color-danger);
+  font-weight: var(--font-weight-semibold);
+}
+
+.danger-action:hover:not(:disabled):not([aria-disabled='true']),
+.danger-action:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--color-danger-fg);
+  border-color: var(--color-danger-fg);
+}
+
+/* Stock-status badge: a pill whose words carry the status; color only
+   reinforces it. Consumers: product row (R3, reused by R4), detail (R6).
+   "ok" is plain text so rows that need attention stand out. */
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-helper);
+  line-height: var(--line-height-compact);
+  white-space: nowrap;
+}
+
+.badge--ok {
+  color: var(--color-text-secondary);
+}
+
+.badge--low {
+  background: var(--color-stock-low-bg);
+  color: var(--color-stock-low-fg);
+  border-color: var(--color-stock-low-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+.badge--out {
+  background: var(--color-stock-out-bg);
+  color: var(--color-stock-out-fg);
+  border-color: var(--color-stock-out-border);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Notice: a tinted message box with a solid accent on the inline start edge.
+   The message is always words; the accent is decorative. Consumers: danger =
+   form/login/dashboard/dialog errors (R4, R6, R7, R8, R9); warning = session
+   and over-removal warnings (R2, R6); info = pending-sync message (R2). */
+.notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid;
+  border-inline-start-width: var(--space-1);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-error);
+  line-height: var(--line-height-compact);
+}
+
+.notice--info {
+  background: var(--color-info-bg);
+  color: var(--color-info-fg);
+  border-color: var(--color-info-border);
+  border-inline-start-color: var(--color-info);
+}
+
+.notice--warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+  border-color: var(--color-warning-border);
+  border-inline-start-color: var(--color-warning);
+}
+
+.notice--danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+  border-color: var(--color-danger-border);
+  border-inline-start-color: var(--color-danger);
+}
+
 /* Single-line truncation with an ellipsis (Phase 7I). Used for a product name
    in a row. The full text stays in the DOM, so the accessible name is the full
    name; the detail page shows it in full. overflow: hidden also lets a flex

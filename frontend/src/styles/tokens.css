@@ -158,6 +158,11 @@
   --font-size-label: 0.875rem;
   --font-size-helper: 0.8125rem;
   --font-size-error: 0.875rem;
+  /* Quantity-led display (redesign R1). Quantity is the most important number
+     on a product row and on the detail page. quantity: rows (R3, R4);
+     display: the detail-page quantity (R6). Use with --font-numeric. */
+  --font-size-quantity: 1.25rem;
+  --font-size-display: 2rem;
 
   --font-weight-regular: 400;
   --font-weight-medium: 500;
