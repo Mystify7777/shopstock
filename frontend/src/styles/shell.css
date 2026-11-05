@@ -183,6 +183,13 @@ html {
     min-width: 0;
   }
 
+  /* Active tab: the indicator sits on the edge facing the content (the top
+     edge of a bottom bar), not on the screen edge. Weight and tint still
+     mark it too, so it is not color alone. */
+  .primary-nav[data-mobile-bar='true'] .primary-nav__link[aria-current='page'] {
+    box-shadow: inset 0 var(--focus-ring-width) 0 var(--color-selected-border);
+  }
+
   .primary-nav[data-mobile-bar='true'] .primary-nav__link {
     justify-content: center;
     width: 100%;
@@ -201,75 +208,36 @@ html {
 }
 
 /* ---------------------------------------------------------------------
- * Session notice (auth-status messaging; text always carries the meaning)
+ * Session notice and sync status (redesign R2)
+ *
+ * Both are shared notices (.notice + a variant, base.css): the colors come
+ * from the variant, and the message is always words. Here they only get their
+ * place in the page: the width and gutters of <main>, with a small gap above,
+ * instead of a full-width band. Neither is a control. The one button (the
+ * session notice's "Sign in") is a normal button.
  * ------------------------------------------------------------------- */
+
+.session-notice,
+.sync-status {
+  width: calc(100% - 2 * var(--gutter));
+  max-width: calc(var(--layout-width-content) - 2 * var(--gutter));
+  margin: var(--space-2) auto 0;
+  /* Persistent status is tighter than the shared .notice default (which stays
+     as is for page-level messages): the same words, less box. This rule comes
+     after base.css in the bundle (main.jsx), so it overrides the padding. */
+  padding: var(--space-1) var(--space-2);
+}
 
 .session-notice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--gutter);
-  border-bottom: 1px solid;
-  font-size: var(--font-size-label);
-  line-height: var(--line-height-compact);
 }
 
-.session-notice p {
-  margin: 0;
-}
-
-.session-notice--offline {
-  background: var(--color-offline-bg);
-  color: var(--color-offline-fg);
-  border-color: var(--color-offline-border);
-}
-
-.session-notice--warning {
-  background: var(--color-warning-bg);
-  color: var(--color-warning-fg);
-  border-color: var(--color-warning-border);
-}
-
-/* ---------------------------------------------------------------------
- * Sync status indicator (Phase 7G). The state is always in words (label +
- * sentence); colour only reinforces it.
- * ------------------------------------------------------------------- */
-
-.sync-status {
-  padding: var(--space-3) var(--gutter);
-  border-bottom: 1px solid;
-  font-size: var(--font-size-label);
-  line-height: var(--line-height-compact);
-}
-
+.session-notice p,
 .sync-status p {
   margin: 0;
-}
-
-.sync-status--offline {
-  background: var(--color-offline-bg);
-  color: var(--color-offline-fg);
-  border-color: var(--color-offline-border);
-}
-
-.sync-status--pending {
-  background: var(--color-syncing-bg);
-  color: var(--color-syncing-fg);
-  border-color: var(--color-syncing-border);
-}
-
-/* Unknown state: deliberately neutral and restrained, not alarming. */
-.sync-status--unavailable {
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  border-color: var(--color-border);
-}
-
-.sync-status--attention {
-  background: var(--color-failed-bg);
-  color: var(--color-failed-fg);
-  border-color: var(--color-failed-border);
 }
 
 /* ---------------------------------------------------------------------

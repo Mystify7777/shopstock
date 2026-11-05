@@ -15,6 +15,15 @@ function changes(count) {
  * "Sync status unavailable" means the queue could not be read: its state is
  * unknown, which is different from nothing waiting.
  */
+// Presentation only (R2): which notice style each existing state wears. The
+// states, their precedence and their wording are unchanged.
+const NOTICE_VARIANT = Object.freeze({
+  [SYNC_STATE.OFFLINE]: 'neutral',
+  [SYNC_STATE.UNAVAILABLE]: 'neutral',
+  [SYNC_STATE.ATTENTION]: 'danger',
+  [SYNC_STATE.PENDING]: 'info'
+});
+
 export default function SyncStatusIndicator() {
   const { state, pendingCount, failedCount } = useSyncStatus();
 
@@ -37,7 +46,7 @@ export default function SyncStatusIndicator() {
   }
 
   return (
-    <div className={`sync-status sync-status--${state}`}>
+    <div className={`notice notice--${NOTICE_VARIANT[state]} sync-status sync-status--${state}`}>
       <p>
         <strong>{label}</strong> {detail}
       </p>

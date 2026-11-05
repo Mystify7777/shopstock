@@ -257,6 +257,17 @@ textarea:disabled {
   border-inline-start-color: var(--color-danger);
 }
 
+/* Neutral notice (redesign R2): a condition that is normal for an offline-first
+   app and is not a problem, e.g. "offline" or "status unavailable". Uses the
+   existing offline tokens. Consumers: sync status and session notice (R2),
+   and later R9. */
+.notice--neutral {
+  background: var(--color-offline-bg);
+  color: var(--color-offline-fg);
+  border-color: var(--color-offline-border);
+  border-inline-start-color: var(--color-offline);
+}
+
 /* Single-line truncation with an ellipsis (Phase 7I). Used for a product name
    in a row. The full text stays in the DOM, so the accessible name is the full
    name; the detail page shows it in full. overflow: hidden also lets a flex

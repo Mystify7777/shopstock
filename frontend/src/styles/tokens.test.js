@@ -400,6 +400,9 @@ describe('tokens.css: WCAG AA contrast', () => {
     it.each(['info', 'warning', 'danger'])('notice %s: accent edge on its tinted bg >= 3:1', (s) => {
       expect(contrast(`--color-${s}`, `--color-${s}-bg`)).toBeGreaterThanOrEqual(AA_UI);
     });
+    it('neutral notice: accent edge on its tinted bg >= 3:1', () => {
+      expect(contrast('--color-offline', '--color-offline-bg')).toBeGreaterThanOrEqual(AA_UI);
+    });
     it.each(['stock-low', 'stock-out'])('badge %s: fg on tinted bg >= 4.5:1', (s) => {
       expect(contrast(`--color-${s}-fg`, `--color-${s}-bg`)).toBeGreaterThanOrEqual(AA_TEXT);
     });

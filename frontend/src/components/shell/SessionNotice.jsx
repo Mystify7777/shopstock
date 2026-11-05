@@ -14,7 +14,7 @@ export default function SessionNotice() {
 
   if (reason === AUTH_REASON.OFFLINE) {
     return (
-      <div className="session-notice session-notice--offline" role="status">
+      <div className="notice notice--neutral session-notice session-notice--offline" role="status">
         <p>
           Can&rsquo;t reach the server. You&rsquo;re working with the data saved on this device, and
           your changes will sync when you&rsquo;re back online.
@@ -24,7 +24,7 @@ export default function SessionNotice() {
   }
 
   return (
-    <div className="session-notice session-notice--warning" role="status">
+    <div className="notice notice--warning session-notice session-notice--warning" role="status">
       <p>
         You&rsquo;re signed out of the server. Your data on this device is safe and you can keep
         working, but syncing needs you to sign in again.
