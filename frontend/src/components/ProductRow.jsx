@@ -6,6 +6,10 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 // matches and related products all render through this single row, so
 // navigation and stock-status display are identical everywhere.
 //
+// Layout (redesign R3): name ........ quantity  status badge  >. Quantity is the
+// dominant number; the status is the shared .badge (text always, color only
+// reinforces it). No optional meta line yet: the row has no data for one.
+//
 // The whole row is a real link to /products/:id (navigation is a link, not
 // a button). It shows only what the product itself carries:
 //   - name ("Unnamed product" for a photo-only product)
@@ -42,7 +46,9 @@ export default function ProductRow({ product }) {
     lowStockDisabled: product.lowStockDisabled
   });
   const attention = needsAttention(status);
-  const statusClass = `product-row__status product-row__status--${STATUS_MODIFIER[status]}`;
+  // The shared badge (base.css) draws it; product-row__status stays only as a
+  // stable hook for tests and page selectors.
+  const statusClass = `badge badge--${STATUS_MODIFIER[status]} product-row__status`;
 
   return (
     <li className="product-row">

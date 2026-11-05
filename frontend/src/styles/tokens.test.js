@@ -137,6 +137,7 @@ describe('tokens.css: required coverage (Issue #17)', () => {
     '--gutter-mobile',
     '--gutter-desktop',
     '--control-height',
+    '--row-height-min',
     '--duration-base',
     '--ease-standard',
     '--z-dropdown',

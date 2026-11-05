@@ -178,10 +178,13 @@
 
 .product-row__link {
   display: flex;
+  position: relative; /* anchors the chevron, which sits outside the wrapping flow */
+  flex-wrap: wrap; /* only when text is enlarged so far that the figures would crush the name */
   align-items: center;
-  gap: var(--space-3);
-  min-height: var(--touch-target-min);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--row-height-min);
+  /* End padding reserves the chevron's place, so it never wraps onto a line of its own. */
+  padding: var(--space-2) calc(var(--space-4) + 1rem) var(--space-2) var(--space-4);
   background: var(--color-surface);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -199,46 +202,37 @@
   background: var(--color-surface-active);
 }
 
+/* The name takes the remaining width and is cut with an ellipsis
+   (.text-truncate). Its basis is small so the row stays on one line at normal
+   sizes; with enlarged text (rem grows, the row does not) the figures wrap
+   below it rather than squeezing it to nothing. */
 .product-row__name {
-  flex: 1;
+  flex: 1 1 4rem;
   font-weight: var(--font-weight-medium);
 }
 
+/* Quantity is the most important number in the row. Right-aligned with a
+   small minimum so figures line up down a list. */
 .product-row__quantity {
+  flex: none;
+  min-width: 3ch;
+  text-align: end;
+  font-size: var(--font-size-quantity);
   font-variant-numeric: var(--font-numeric);
-  font-weight: var(--font-weight-semibold);
-}
-
-/* Status is always text. Low/out also get a tinted pill; normal is
-   plain secondary text, so rows that need attention stand out. */
-.product-row__status {
-  padding: 0 var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-helper);
+  font-weight: var(--font-weight-bold);
   line-height: var(--line-height-compact);
-  white-space: nowrap;
 }
 
-.product-row__status--ok {
-  color: var(--color-text-secondary);
-}
-
-.product-row__status--low {
-  background: var(--color-stock-low-bg);
-  color: var(--color-stock-low-fg);
-  border-color: var(--color-stock-low-border);
-  font-weight: var(--font-weight-semibold);
-}
-
-.product-row__status--out {
-  background: var(--color-stock-out-bg);
-  color: var(--color-stock-out-fg);
-  border-color: var(--color-stock-out-border);
-  font-weight: var(--font-weight-semibold);
+/* The status is the shared .badge (base.css). */
+.product-row__status {
+  flex: none;
 }
 
 .product-row__chevron {
+  position: absolute;
+  inset-inline-end: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--color-text-muted);
   font-size: var(--font-size-heading-section);
   line-height: 1;

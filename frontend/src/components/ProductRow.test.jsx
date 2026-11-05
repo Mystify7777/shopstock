@@ -138,4 +138,59 @@ describe('ProductRow', () => {
     const { container } = renderRow(base);
     expect(container.querySelector('.product-row__chevron')).toHaveAttribute('aria-hidden', 'true');
   });
+
+  // Redesign R3: shared badge, quantity emphasis, no nested controls.
+  describe('R3: shared status badge and quantity', () => {
+    it.each([
+      [50, 'In stock', 'badge--ok'],
+      [3, 'Low Stock', 'badge--low'],
+      [0, 'Out of Stock', 'badge--out']
+    ])('quantity %s renders "%s" as the shared %s badge (and keeps the legacy hook)', (quantity, text, modifier) => {
+      renderRow({ ...base, quantity });
+      const badge = screen.getByText(text);
+      expect(badge).toHaveClass('badge', modifier, 'product-row__status');
+      // Exactly one badge variant, so two status systems cannot both apply.
+      expect(badge.className.match(/badge--/g)).toHaveLength(1);
+    });
+
+    it('the badge is plain text: no role, no tabindex, not a control', () => {
+      renderRow({ ...base, quantity: 0 });
+      const badge = screen.getByText('Out of Stock');
+      expect(badge.tagName).toBe('SPAN');
+      expect(badge).not.toHaveAttribute('role');
+      expect(badge).not.toHaveAttribute('tabindex');
+    });
+
+    it('the quantity is its own element, so it can carry the dominant styling', () => {
+      const { container } = renderRow({ ...base, quantity: 2.5 });
+      const quantity = container.querySelector('.product-row__quantity');
+      expect(quantity).toHaveTextContent(/^2\.5$/);
+      expect(screen.getByRole('link')).toContainElement(quantity);
+    });
+
+    it('order in the link is name, quantity, status, then the decorative chevron', () => {
+      const { container } = renderRow({ ...base, quantity: 3 });
+      const classes = [...container.querySelector('.product-row__link').children].map((el) => el.className);
+      expect(classes[0]).toMatch(/product-row__name/);
+      expect(classes[1]).toMatch(/product-row__quantity/);
+      expect(classes[2]).toMatch(/product-row__status/);
+      expect(classes[3]).toMatch(/product-row__chevron/);
+    });
+
+    it('contains no nested interactive element: the link is the only control', () => {
+      const { container } = renderRow({ ...base, quantity: 0 });
+      const link = screen.getByRole('link');
+      expect(link.querySelectorAll('a, button, input, select, textarea, summary, [tabindex], [role]')).toHaveLength(0);
+      expect(container.querySelectorAll('a, button, input, select, textarea, [tabindex]')).toHaveLength(1);
+    });
+
+    it('a long name stays whole in the DOM, truncated by CSS, while quantity and status still render', () => {
+      const longName = 'Extra Long Name Premium Imported Whole Grain Basmati Rice Family Pack 25 kg Value Edition';
+      const { container } = renderRow({ ...base, name: longName, quantity: 1250.75 });
+      expect(container.querySelector('.product-row__name')).toHaveClass('text-truncate');
+      expect(container.querySelector('.product-row__name').textContent).toBe(longName);
+      expect(container.querySelector('.product-row__quantity')).toHaveTextContent('1250.75');
+      expect(screen.getByText('In stock')).toHaveClass('badge');
+    });
+  });
 });

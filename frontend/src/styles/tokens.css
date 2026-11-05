@@ -221,6 +221,10 @@
   --control-height: 2.75rem;
   --control-height-lg: 3rem;
   --touch-target-min: 2.75rem;
+  /* Minimum height of a stock-register row (redesign R3): a floor, never a
+     fixed height, so wrapped names and enlarged text can grow it. Consumers:
+     product row (R3), dashboard rows (R4). */
+  --row-height-min: 3.5rem;
 
   /* ------------------------------------------------------------------
    * Motion: short, functional, no decoration
