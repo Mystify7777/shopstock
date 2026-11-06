@@ -3,6 +3,19 @@
  * the one screen -- the shared frame lives in shell.css.
  */
 
+.dashboard__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.dashboard__header h1 {
+  margin: 0;
+}
+
 .dashboard__search {
   display: flex;
   flex-wrap: wrap;
@@ -22,18 +35,26 @@
   min-width: 0;
 }
 
+/* Totals are secondary: a quiet register (label left, figure right) at the end
+   of the page, not a row of KPI cards. */
 .dashboard__stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(calc(var(--layout-width-narrow) / 5), 1fr));
-  gap: var(--space-3);
   margin: 0 0 var(--space-4);
-}
-
-.dashboard__stats > div {
-  padding: var(--space-3) var(--space-4);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
+}
+
+.dashboard__stats > div {
+  display: flex;
+  flex-wrap: wrap; /* with enlarged text the label and figure stack instead of overflowing */
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+
+.dashboard__stats > div + div {
+  border-top: 1px solid var(--color-border);
 }
 
 .dashboard__stats dt {
@@ -42,8 +63,8 @@
 }
 
 .dashboard__stats dd {
-  margin: 0;
-  font-size: var(--font-size-heading-page);
+  margin: 0 0 0 auto;
+  font-size: var(--font-size-quantity);
   font-weight: var(--font-weight-bold);
   font-variant-numeric: var(--font-numeric);
 }
@@ -82,6 +103,16 @@
   gap: 0;
 }
 
+/* Rows are cards in the same language as the product row (R3): shared surface,
+   border, radius and height floor. The DOM inside is unchanged. */
+.dashboard__row--card {
+  min-height: var(--row-height-min);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
 .dashboard__row--stacked + .dashboard__row--stacked {
   margin-top: var(--space-2);
 }
@@ -97,8 +128,18 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0 var(--space-3);
+  justify-content: space-between;
   min-width: 0;
   max-width: 100%;
+  width: 100%;
+}
+
+/* Quantity: the most important figure on the line (same role as in the product row). */
+.dashboard__qty {
+  font-size: var(--font-size-quantity);
+  font-variant-numeric: var(--font-numeric);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-compact);
 }
 
 .dashboard__row-meta {
@@ -109,6 +150,11 @@
 .dashboard__row-detail--nowrap {
   flex: none;
   white-space: nowrap;
+  display: inline-flex;
+  flex-wrap: wrap; /* quantity and badge may sit on two lines when text is enlarged; each stays whole */
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  max-width: 100%;
 }
 
 .dashboard__group h3 {

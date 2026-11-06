@@ -6,6 +6,7 @@ import ResourceView from '../components/ResourceView.jsx';
 import { summarizeInventory, toActivityEntry } from '../domain/dashboard/dashboardSummary.js';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '../../../shared/constants.js';
 import { ADD_STOCK_INTENT } from '../navigation/addStockIntent.js';
+import { STOCK_STATUS } from '../domain/classification/lowStock.js';
 
 // Dashboard (Phase 7C, route "/").
 //
@@ -22,8 +23,9 @@ import { ADD_STOCK_INTENT } from '../navigation/addStockIntent.js';
 const RECENT_ACTIVITY_LIMIT = 10;
 const ATTENTION_ROWS_PER_GROUP = 5;
 
-// Presentation-only formatting. No currency symbol: Issue #19 does not
-// require one and the app has no currency setting.
+// Presentation-only formatting. The expected selling value is shown in rupees
+// (redesign R4): the symbol is a fixed presentation choice, not a currency
+// setting, and the amount itself is unchanged.
 const numberFormat = new Intl.NumberFormat('en-IN', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
@@ -42,8 +44,16 @@ function productName(product) {
     : 'Unnamed product';
 }
 
-function AttentionGroup({ title, products, count, statusText, filterValue }) {
+// Which shared badge each attention group wears. The words come from the same
+// domain labels the Product List uses, so "Low Stock" reads identically in both.
+const ATTENTION_BADGE = {
+  out: { modifier: 'out', label: STOCK_STATUS.OUT },
+  low: { modifier: 'low', label: STOCK_STATUS.LOW }
+};
+
+function AttentionGroup({ title, products, count, filterValue }) {
   if (count === 0) return null;
+  const badge = ATTENTION_BADGE[filterValue];
 
   return (
     <div className="dashboard__group">
@@ -52,12 +62,17 @@ function AttentionGroup({ title, products, count, statusText, filterValue }) {
       </h3>
       <ul className="dashboard__list">
         {products.slice(0, ATTENTION_ROWS_PER_GROUP).map((product) => (
-          <li key={product.id} className="dashboard__row dashboard__row--stacked">
+          <li key={product.id} className="dashboard__row dashboard__row--stacked dashboard__row--card">
             <Link to={`/products/${product.id}`} className="touch-link dashboard__row-name">
               <span className="text-truncate">{productName(product)}</span>
             </Link>
             <div className="dashboard__row-line">
-              <span className="dashboard__row-detail dashboard__row-detail--nowrap">{statusText(product)}</span>
+              {/* Quantity first and largest, then the shared status badge (text, never color
+                  alone). Neither is interactive; the only control on this line is Add stock. */}
+              <span className="dashboard__row-detail dashboard__row-detail--nowrap">
+                <span className="dashboard__qty">{product.quantity}</span>{' '}
+                <span className={`badge badge--${badge.modifier}`}>{badge.label}</span>
+              </span>
               {/* A sibling link, never nested in the name link. It only navigates: the stock
                   change itself is made (and queued, and undoable) on the product page. The
                   hidden suffix gives each link a unique name that still contains "Add stock". */}
@@ -109,13 +124,12 @@ export default function DashboardPage() {
 
   return (
     <div className="dashboard">
-      <h1>Dashboard</h1>
-
-      <p>
+      <div className="dashboard__header">
+        <h1>Dashboard</h1>
         <Link to="/products/new" className="primary-action-link touch-link">
           Add Product
         </Link>
-      </p>
+      </div>
 
       <form role="search" onSubmit={handleSearch} className="dashboard__search">
         <label htmlFor="dashboard-search">Search products</label>
@@ -127,6 +141,71 @@ export default function DashboardPage() {
         />
         <button type="submit">Search</button>
       </form>
+
+      <section aria-labelledby="dashboard-attention-heading">
+        <h2 id="dashboard-attention-heading">Needs attention</h2>
+        <ResourceView
+          resource={inventory}
+          loadingMessage="Checking stock levels…"
+          errorMessage="Couldn't check your stock levels."
+        >
+          {(summary) =>
+            summary.lowStockCount + summary.outOfStockCount === 0 ? (
+              <p>Nothing needs attention.</p>
+            ) : (
+              <>
+                <AttentionGroup
+                  title="Out of stock"
+                  products={summary.outOfStock}
+                  count={summary.outOfStockCount}
+                  filterValue="out"
+                />
+                <AttentionGroup
+                  title="Low stock"
+                  products={summary.lowStock}
+                  count={summary.lowStockCount}
+                  filterValue="low"
+                />
+              </>
+            )
+          }
+        </ResourceView>
+      </section>
+
+      <section aria-labelledby="dashboard-activity-heading">
+        <h2 id="dashboard-activity-heading">Recently updated</h2>
+        <ResourceView
+          resource={activity}
+          loadingMessage="Loading recent activity…"
+          errorMessage="Couldn't load recent activity."
+        >
+          {(entries) =>
+            entries.length === 0 ? (
+              <p>No stock activity yet.</p>
+            ) : (
+              <ul className="dashboard__list">
+                {entries.map((entry) => (
+                  <li key={entry.id} className="dashboard__row dashboard__row--stacked dashboard__row--card">
+                    <Link to={`/products/${entry.productId}`} className="touch-link dashboard__row-name">
+                      <span className="text-truncate">{entry.productName}</span>
+                    </Link>
+                    {/* Title line above, quieter detail line below. The colon is kept for
+                        assistive technology ("Dettol: Added 20 ...") but not shown, and the
+                        visual separator is hidden from it. */}
+                    <span className="dashboard__row-meta">
+                      <span className="visually-hidden">: </span>
+                      {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
+                      {entry.isReversal ? ' (reversal)' : ''}
+                      <span aria-hidden="true"> · </span>
+                      <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        </ResourceView>
+      </section>
 
       <section aria-labelledby="dashboard-inventory-heading">
         <h2 id="dashboard-inventory-heading">Inventory</h2>
@@ -156,7 +235,10 @@ export default function DashboardPage() {
                   {summary.expectedSellingValue && (
                     <div>
                       <dt>Expected selling value</dt>
-                      <dd>{numberFormat.format(summary.expectedSellingValue.total)}</dd>
+                      <dd>
+                        <span className="dashboard__currency">₹</span>
+                        {numberFormat.format(summary.expectedSellingValue.total)}
+                      </dd>
                     </div>
                   )}
                 </dl>
@@ -169,73 +251,6 @@ export default function DashboardPage() {
                   </p>
                 )}
               </>
-            )
-          }
-        </ResourceView>
-      </section>
-
-      <section aria-labelledby="dashboard-attention-heading">
-        <h2 id="dashboard-attention-heading">Needs attention</h2>
-        <ResourceView
-          resource={inventory}
-          loadingMessage="Checking stock levels…"
-          errorMessage="Couldn't check your stock levels."
-        >
-          {(summary) =>
-            summary.lowStockCount + summary.outOfStockCount === 0 ? (
-              <p>Nothing needs attention.</p>
-            ) : (
-              <>
-                <AttentionGroup
-                  title="Out of stock"
-                  products={summary.outOfStock}
-                  count={summary.outOfStockCount}
-                  statusText={() => 'Out of stock'}
-                  filterValue="out"
-                />
-                <AttentionGroup
-                  title="Low stock"
-                  products={summary.lowStock}
-                  count={summary.lowStockCount}
-                  statusText={(product) => `Low stock (${product.quantity} left)`}
-                  filterValue="low"
-                />
-              </>
-            )
-          }
-        </ResourceView>
-      </section>
-
-      <section aria-labelledby="dashboard-activity-heading">
-        <h2 id="dashboard-activity-heading">Recently updated</h2>
-        <ResourceView
-          resource={activity}
-          loadingMessage="Loading recent activity…"
-          errorMessage="Couldn't load recent activity."
-        >
-          {(entries) =>
-            entries.length === 0 ? (
-              <p>No stock activity yet.</p>
-            ) : (
-              <ul className="dashboard__list">
-                {entries.map((entry) => (
-                  <li key={entry.id} className="dashboard__row dashboard__row--stacked">
-                    <Link to={`/products/${entry.productId}`} className="touch-link dashboard__row-name">
-                      <span className="text-truncate">{entry.productName}</span>
-                    </Link>
-                    {/* Title line above, quieter detail line below. The colon is kept for
-                        assistive technology ("Dettol: Added 20 ...") but not shown, and the
-                        visual separator is hidden from it. */}
-                    <span className="dashboard__row-meta">
-                      <span className="visually-hidden">: </span>
-                      {entry.direction === 'added' ? 'Added' : 'Removed'} {entry.amount}
-                      {entry.isReversal ? ' (reversal)' : ''}
-                      <span aria-hidden="true"> · </span>
-                      <time dateTime={entry.recordedAt}>{formatTime(entry.recordedAt)}</time>
-                    </span>
-                  </li>
-                ))}
-              </ul>
             )
           }
         </ResourceView>

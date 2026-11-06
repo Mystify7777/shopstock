@@ -207,9 +207,11 @@ describe('DashboardPage', () => {
 
       expect(within(attention).getByRole('link', { name: 'Dettol' })).toHaveAttribute('href', `/products/${out.id}`);
       expect(within(attention).getByRole('link', { name: 'Parle-G' })).toHaveAttribute('href', `/products/${low.id}`);
-      // status is conveyed in words, not by color
-      expect(within(attention).getByText('Out of stock', { selector: 'span' })).toBeInTheDocument();
-      expect(within(attention).getByText('Low stock (3 left)')).toBeInTheDocument();
+      // status is conveyed in words, not by color: the shared badge carries the words
+      // (R4 replaced the old "Low stock (3 left)" sentence with quantity + badge)
+      expect(within(attention).getByText('Out of Stock', { selector: 'span.badge' })).toBeInTheDocument();
+      expect(within(attention).getByText('Low Stock', { selector: 'span.badge' })).toBeInTheDocument();
+      expect(within(attention).getByText('3', { selector: 'span.dashboard__qty' })).toBeInTheDocument();
     });
 
     it('links each group to the matching filtered Product List', async () => {
@@ -455,8 +457,8 @@ describe('DashboardPage', () => {
         expect(line.children[0]).toHaveClass('dashboard__row-detail--nowrap');
         expect(line.children[1].tagName).toBe('A');
       }
-      expect(rows[0].children[1].children[0]).toHaveTextContent('Out of stock');
-      expect(rows[1].children[1].children[0]).toHaveTextContent('Low stock (3 left)');
+      expect(rows[0].children[1].children[0]).toHaveTextContent('0 Out of Stock');
+      expect(rows[1].children[1].children[0]).toHaveTextContent('3 Low Stock');
     });
 
     it('a recent-activity row keeps the full name accessible and truncates it by class', async () => {
@@ -674,6 +676,100 @@ describe('DashboardPage', () => {
       expect(services.stockEventService.addStock).not.toHaveBeenCalled();
       expect(services.stockEventService.removeStock).not.toHaveBeenCalled();
       expect(services.stockEventService.reverseEvent).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// Redesign R4: composition, quantity/badge hierarchy, rupee presentation. The
+// #56 contract and the data behaviour are pinned by the tests above, unchanged.
+describe('DashboardPage (R4 composition)', () => {
+  const INTERACTIVE = 'a, button, input, select, textarea, summary, [tabindex], [role="button"]';
+
+  it('reads in the order: search, needs attention, recently updated, inventory totals', async () => {
+    renderDashboard(makeServices({ products: [product({ quantity: 0 })] }));
+    await within(section('Needs attention')).findByRole('heading', { name: 'Out of stock (1)' });
+    const search = screen.getByRole('search');
+    const order = [search, section('Needs attention'), section('Recently updated'), section('Inventory')];
+    for (let i = 0; i < order.length - 1; i += 1) {
+      expect(order[i].compareDocumentPosition(order[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it('keeps Add Product in the header beside the title, as the same primary link', () => {
+    renderDashboard(makeServices());
+    const add = screen.getByRole('link', { name: 'Add Product' });
+    expect(add.parentElement).toHaveClass('dashboard__header');
+    expect(add.parentElement).toContainElement(screen.getByRole('heading', { name: 'Dashboard' }));
+    expect(add).toHaveClass('primary-action-link', 'touch-link');
+  });
+
+  describe('attention rows', () => {
+    it('show the quantity and the shared badge, matching each group, as plain text', async () => {
+      renderDashboard(
+        makeServices({ products: [product({ name: 'Dettol', quantity: 0 }), product({ name: 'Parle-G', quantity: 2.5 })] })
+      );
+      const attention = section('Needs attention');
+      await within(attention).findByRole('link', { name: 'Dettol' });
+      const [outRow, lowRow] = within(attention).getAllByRole('listitem');
+
+      expect(outRow.querySelector('.dashboard__qty')).toHaveTextContent(/^0$/);
+      expect(outRow.querySelector('.badge')).toHaveClass('badge--out');
+      expect(outRow.querySelector('.badge')).toHaveTextContent('Out of Stock');
+      expect(lowRow.querySelector('.dashboard__qty')).toHaveTextContent(/^2\.5$/);
+      expect(lowRow.querySelector('.badge')).toHaveClass('badge--low');
+      expect(lowRow.querySelector('.badge')).toHaveTextContent('Low Stock');
+
+      for (const row of [outRow, lowRow]) {
+        for (const el of [row.querySelector('.dashboard__qty'), row.querySelector('.badge')]) {
+          expect(el.tagName).toBe('SPAN');
+          expect(el).not.toHaveAttribute('role');
+          expect(el).not.toHaveAttribute('tabindex');
+        }
+      }
+    });
+
+    it('contain exactly two controls (the name link and Add stock), none nested', async () => {
+      renderDashboard(makeServices({ products: [product({ name: 'Dettol', quantity: 0 })] }));
+      const row = (await within(section('Needs attention')).findByRole('link', { name: 'Dettol' })).closest('li');
+      expect(row.querySelectorAll(INTERACTIVE)).toHaveLength(2);
+      for (const control of row.querySelectorAll(INTERACTIVE)) {
+        expect(control.querySelector(INTERACTIVE)).toBeNull();
+      }
+    });
+  });
+
+  it('recently updated rows have no quantity cell, no badge and no controls beyond the product link', async () => {
+    const item = product({ name: 'Dettol' });
+    renderDashboard(makeServices({ products: [item], events: [event({ productId: item.id, type: 'ADD', quantity: 20, appliedQuantity: 20 })] }));
+    const row = (await within(section('Recently updated')).findByRole('link', { name: 'Dettol' })).closest('li');
+    expect(row.querySelector('.dashboard__qty, .badge')).toBeNull();
+    expect(row.querySelectorAll(INTERACTIVE)).toHaveLength(1);
+  });
+
+  describe('inventory totals and the rupee symbol', () => {
+    it('shows ₹ only on the expected selling value, never on a count', async () => {
+      renderDashboard(makeServices({ products: [product({ quantity: 10, sellingPrice: 100 }), product({ quantity: 0 })] }));
+      const inventory = section('Inventory');
+      await within(inventory).findByText('Expected selling value');
+      const stat = (label) => within(inventory).getByText(label).closest('div');
+      expect(stat('Expected selling value')).toHaveTextContent('₹1,000.00');
+      for (const label of ['Products', 'Low stock', 'Out of stock']) {
+        expect(stat(label)).not.toHaveTextContent('₹');
+      }
+      expect(document.body.textContent.match(/₹/g)).toHaveLength(1);
+    });
+
+    it('shows no ₹ anywhere when there is no value to show', async () => {
+      renderDashboard(makeServices({ products: [product({ quantity: 3, sellingPrice: null })] }));
+      await within(section('Inventory')).findByText('Products');
+      expect(document.body.textContent).not.toContain('₹');
+    });
+
+    it('the totals are plain text: no links or buttons in the Inventory section', async () => {
+      renderDashboard(makeServices({ products: [product({ quantity: 0 })] }));
+      const inventory = section('Inventory');
+      await within(inventory).findByText('Products');
+      expect(inventory.querySelectorAll(INTERACTIVE)).toHaveLength(0);
     });
   });
 });
