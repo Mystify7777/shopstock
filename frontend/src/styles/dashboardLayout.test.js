@@ -53,7 +53,10 @@ describe('header and totals', () => {
   });
 
   it('the totals are a quiet register (label left, figure right), not a grid of cards', () => {
-    expect(css).not.toMatch(/grid-template-columns/);
+    // Scoped to the totals rules, so an unrelated dashboard rule may use a grid later.
+    for (const selector of ['.dashboard__stats', '.dashboard__stats > div']) {
+      expect(rule(selector)).not.toMatch(/display:\s*(?:inline-)?grid|grid-template/);
+    }
     expect(rule('.dashboard__stats > div')).toMatch(/justify-content:\s*space-between/);
   });
 
