@@ -1261,6 +1261,8 @@ describe('ProductListPage', () => {
 
       it('renders locations and tags as labelled groups of native, keyboard-reachable checkboxes', async () => {
         renderPage(makeMockService(), { repo: optionsRepo() });
+        // R5: the filter controls live in a disclosure that starts collapsed.
+        fireEvent.click(await screen.findByRole('button', { name: /^Filters/ }));
         const locations = await screen.findByRole('group', { name: 'Locations' });
         const counter = within(locations).getByLabelText('Counter');
         expect(counter).toHaveAttribute('type', 'checkbox');

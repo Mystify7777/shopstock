@@ -30,15 +30,10 @@
  * Search
  * ------------------------------------------------------------------- */
 
+/* The search field is the page's main control: full width, directly under the
+   title. Its label is visually hidden (still its accessible name). */
 .product-list__search {
-  margin-bottom: var(--space-4);
-}
-
-.product-list__search label {
-  display: block;
-  margin-bottom: var(--space-1);
-  font-size: var(--font-size-label);
-  font-weight: var(--font-weight-medium);
+  margin-bottom: var(--space-3);
 }
 
 .product-list__search-row {
@@ -60,6 +55,51 @@
   flex-direction: column;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+
+/* Disclosure toggle (R5). The count and the arrow are cues; the words "Filters"
+   and the visually hidden "N active" carry the meaning. */
+.filters-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.filters-toggle::after {
+  content: '\25BE';
+}
+
+.filters-toggle[aria-expanded='true']::after {
+  content: '\25B4';
+}
+
+.filters-toggle__count {
+  min-width: 1.5rem;
+  padding: 0 var(--space-2);
+  background: var(--color-selected-bg);
+  color: var(--color-selected-fg);
+  border: 1px solid var(--color-selected-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-helper);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-compact);
+  text-align: center;
+}
+
+/* The controls inside keep their own layout. A hairline above and below sets
+   the open panel apart without a box. */
+.product-list__filters-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--color-border);
+}
+
+/* An author display value overrides the browser's [hidden]; restore it. */
+.product-list__filters-panel[hidden] {
+  display: none;
 }
 
 .product-list__category label {
@@ -157,6 +197,40 @@
 
 .product-list__active p {
   margin: 0;
+}
+
+.product-list__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Active-filter chip (R5): one button that removes the filter. Same selected
+   look as a checked filter chip, plus a trailing x, so it reads as "on". */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: 0 var(--space-3);
+  background: var(--color-selected-bg);
+  color: var(--color-selected-fg);
+  border-color: var(--color-selected-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+}
+
+.filter-chip:hover:not(:disabled):not([aria-disabled='true']),
+.filter-chip:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--color-selected-bg);
+  border-color: var(--color-primary-active);
+}
+
+.filter-chip__label {
+  min-width: 0;
+  overflow-wrap: anywhere; /* a long name wraps inside the chip instead of widening the page */
 }
 
 /* ---------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppContext } from '../contexts/AppContext.jsx';
 import { useAsyncResource } from '../hooks/useAsyncResource.js';
@@ -16,6 +16,12 @@ const SEARCH_DEBOUNCE_MS = 450;
 const STOCK_STATUS_PARAM_LABELS = {
   low: 'low stock products',
   out: 'out-of-stock products'
+};
+
+// R5: the chip wording for an active stock-status filter (sentence case, short).
+const STOCK_STATUS_CHIP_LABELS = {
+  low: 'Low stock',
+  out: 'Out of stock'
 };
 
 function parseStockStatusParam(value) {
@@ -80,6 +86,17 @@ function parseStockStatusParam(value) {
  * search pipeline is aware voice input exists. Absent entirely (not
  * disabled) when unsupported, so text search remains the only, fully
  * functional path on unsupported browsers/devices.
+ *
+ * Redesign R5 (presentation and interaction quality; behavior unchanged): the
+ * filter controls sit in a disclosure ("Filters", with the active count) that
+ * is collapsed by default, and every active filter also shows as a chip that
+ * removes it. The disclosure panel stays in the DOM and is only hidden, so the
+ * controls and their state are untouched. Filter state is plain local state:
+ * only ?q= and ?stockStatus= seed it, and nothing here writes to the URL.
+ * Focus: opening or closing leaves focus on the Filters button; Escape inside
+ * the panel closes it and returns focus there; removing a chip moves focus to
+ * the next chip (or the Filters button); Clear filters returns focus to the
+ * Filters button.
  */
 export default function ProductListPage() {
   const { productService, classificationRepository } = useAppContext();
@@ -122,6 +139,15 @@ export default function ProductListPage() {
     Boolean(categoryId) || locationIds.length > 0 || tagIds.length > 0 || Boolean(stockStatus);
   const activeFilterCount =
     (categoryId ? 1 : 0) + locationIds.length + tagIds.length + (stockStatus ? 1 : 0);
+
+  // R5: the filter disclosure. Collapsed by default so the list starts high on
+  // small screens; the active filters stay visible as chips either way.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersToggleRef = useRef(null);
+  const activeStripRef = useRef(null);
+  // Which element should take focus after a chip is removed or filters are
+  // cleared (the removed control disappears, so focus would otherwise be lost).
+  const pendingFocusRef = useRef(null);
 
   // Phase 7C: if the URL's parameters change while this page stays mounted
   // (e.g. browser back/forward between two /products?... URLs), re-seed the
@@ -236,10 +262,57 @@ export default function ProductListPage() {
   }
 
   function clearFilters() {
+    pendingFocusRef.current = 'toggle';
     setCategoryId(null);
     setLocationIds([]);
     setTagIds([]);
     setStockStatus(null);
+  }
+
+  // R5: one removable chip per active filter, in the order category, locations,
+  // tags, stock status. Names come from the already-loaded options.
+  const nameOf = (options, id) => options.find((option) => option.id === id)?.name ?? 'Unknown';
+  const activeChips = [
+    ...(categoryId
+      ? [{ key: 'category', label: nameOf(categoryOptions, categoryId), remove: () => setCategoryId(null) }]
+      : []),
+    ...locationIds.map((id) => ({
+      key: `location:${id}`,
+      label: nameOf(locationOptions, id),
+      remove: () => toggleLocationId(id)
+    })),
+    ...tagIds.map((id) => ({ key: `tag:${id}`, label: nameOf(tagOptions, id), remove: () => toggleTagId(id) })),
+    ...(stockStatus
+      ? [{ key: 'stock', label: STOCK_STATUS_CHIP_LABELS[stockStatus], remove: () => setStockStatus(null) }]
+      : [])
+  ];
+  const activeChipKeys = activeChips.map((chip) => chip.key).join('|');
+
+  function removeChip(index) {
+    const neighbour = activeChips[index + 1] ?? activeChips[index - 1];
+    pendingFocusRef.current = neighbour ? neighbour.key : 'toggle';
+    activeChips[index].remove();
+  }
+
+  // Put focus back after the control that had it was removed (see above).
+  useEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    pendingFocusRef.current = null;
+    const chip =
+      target === 'toggle'
+        ? null
+        : [...(activeStripRef.current?.querySelectorAll('[data-chip]') ?? [])].find(
+            (el) => el.dataset.chip === target
+          );
+    (chip ?? filtersToggleRef.current)?.focus();
+  }, [activeChipKeys]);
+
+  function closeFiltersOnEscape(event) {
+    if (event.key === 'Escape' && filtersOpen) {
+      setFiltersOpen(false);
+      filtersToggleRef.current?.focus();
+    }
   }
 
   // Text-query results keep their Fuse relevance order. Filters-only
@@ -317,7 +390,9 @@ export default function ProductListPage() {
       </div>
 
       <div className="product-list__search">
-        <label htmlFor="product-search">Search</label>
+        <label htmlFor="product-search" className="visually-hidden">
+          Search
+        </label>
         <div className="product-list__search-row">
           <input
             id="product-search"
@@ -346,73 +421,116 @@ export default function ProductListPage() {
 
       {(hasFilterOptions || hasActiveFilters) && (
         <div className="product-list__filters">
-          {categoryOptions.length > 0 && (
-            <div className="product-list__category">
-              <label htmlFor="filter-category">Category</label>
-              <select
-                id="filter-category"
-                value={categoryId || ''}
-                onChange={(e) => setCategoryId(e.target.value || null)}
-              >
-                <option value="">All categories</option>
-                {categoryOptions.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {locationOptions.length > 0 && (
-            <fieldset className="chip-group">
-              <legend>Locations</legend>
-              <div className="chip-group__items">
-                {locationOptions.map((location) => (
-                  <label key={location.id} className="chip">
-                    <input
-                      type="checkbox"
-                      className="chip__input"
-                      checked={locationIds.includes(location.id)}
-                      onChange={() => toggleLocationId(location.id)}
-                    />
-                    <span className="chip__label">{location.name}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-          )}
-
-          {tagOptions.length > 0 && (
-            <fieldset className="chip-group">
-              <legend>Tags</legend>
-              <div className="chip-group__items">
-                {tagOptions.map((tag) => (
-                  <label key={tag.id} className="chip">
-                    <input
-                      type="checkbox"
-                      className="chip__input"
-                      checked={tagIds.includes(tag.id)}
-                      onChange={() => toggleTagId(tag.id)}
-                    />
-                    <span className="chip__label">{tag.name}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-          )}
+          <button
+            ref={filtersToggleRef}
+            type="button"
+            className="filters-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls="product-filters-panel"
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            Filters
+            {activeFilterCount > 0 && (
+              <>
+                <span className="filters-toggle__count" aria-hidden="true">
+                  {activeFilterCount}
+                </span>
+                <span className="visually-hidden">, {activeFilterCount} active</span>
+              </>
+            )}
+          </button>
 
           {hasActiveFilters && (
-            <div className="product-list__active">
-              <span>
+            <div className="product-list__active" ref={activeStripRef}>
+              <span className="visually-hidden">
                 {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'} active
               </span>
-              {stockStatus && <p>Showing {STOCK_STATUS_PARAM_LABELS[stockStatus]} only.</p>}
-              <button type="button" onClick={clearFilters}>
+              {/* A plain wrapper, not a list: on this page list items are product rows. */}
+              <div className="product-list__chips">
+                {activeChips.map((chip, index) => (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    className="filter-chip"
+                    data-chip={chip.key}
+                    aria-label={`Remove filter: ${chip.label}`}
+                    onClick={() => removeChip(index)}
+                  >
+                    <span className="filter-chip__label">{chip.label}</span>
+                    <span aria-hidden="true">&times;</span>
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="quiet-action" onClick={clearFilters}>
                 Clear filters
               </button>
+              {stockStatus && <p>Showing {STOCK_STATUS_PARAM_LABELS[stockStatus]} only.</p>}
             </div>
           )}
+
+          {/* The controls stay mounted and keep their state; collapsing only hides them. */}
+          <div
+            id="product-filters-panel"
+            className="product-list__filters-panel"
+            hidden={!filtersOpen}
+            onKeyDown={closeFiltersOnEscape}
+          >
+            {categoryOptions.length > 0 && (
+              <div className="product-list__category">
+                <label htmlFor="filter-category">Category</label>
+                <select
+                  id="filter-category"
+                  value={categoryId || ''}
+                  onChange={(e) => setCategoryId(e.target.value || null)}
+                >
+                  <option value="">All categories</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {locationOptions.length > 0 && (
+              <fieldset className="chip-group">
+                <legend>Locations</legend>
+                <div className="chip-group__items">
+                  {locationOptions.map((location) => (
+                    <label key={location.id} className="chip">
+                      <input
+                        type="checkbox"
+                        className="chip__input"
+                        checked={locationIds.includes(location.id)}
+                        onChange={() => toggleLocationId(location.id)}
+                      />
+                      <span className="chip__label">{location.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
+            {tagOptions.length > 0 && (
+              <fieldset className="chip-group">
+                <legend>Tags</legend>
+                <div className="chip-group__items">
+                  {tagOptions.map((tag) => (
+                    <label key={tag.id} className="chip">
+                      <input
+                        type="checkbox"
+                        className="chip__input"
+                        checked={tagIds.includes(tag.id)}
+                        onChange={() => toggleTagId(tag.id)}
+                      />
+                      <span className="chip__label">{tag.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+          </div>
         </div>
       )}
 
