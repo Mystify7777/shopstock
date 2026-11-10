@@ -99,7 +99,7 @@ describe('ProductDetailPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Parle-G')).toBeInTheDocument();
-      expect(screen.getByText(/Quantity: 10/)).toBeInTheDocument();
+      expect(screen.getByText('10', { selector: '.product-detail__quantity-figure' })).toBeInTheDocument();
     });
   });
 
@@ -495,7 +495,7 @@ describe('ProductDetailPage', () => {
       it('shows the name, the quantity as text, and a stock-status label', async () => {
         mount();
         expect(await screen.findByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
-        expect(screen.getByText(/Quantity: 10/)).toBeInTheDocument();
+        expect(screen.getByText('10', { selector: '.product-detail__quantity-figure' })).toBeInTheDocument();
         expect(screen.getByText('In stock')).toBeInTheDocument();
         expect(screen.queryByRole('status', { name: /./ })).not.toBeInTheDocument();
       });
@@ -637,7 +637,7 @@ describe('ProductDetailPage', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'Parle-G' })).toBeInTheDocument();
         expect(screen.queryByText('Loading product…')).not.toBeInTheDocument();
         reload.resolve({ ...SAMPLE_PRODUCT, quantity: 12 });
-        expect(await screen.findByText(/Quantity: 12/)).toBeInTheDocument();
+        expect(await screen.findByText('12', { selector: '.product-detail__quantity-figure' })).toBeInTheDocument();
       });
     });
 

@@ -76,8 +76,13 @@ describe('primary navigation active indicator', () => {
   it('the mobile bar height is unchanged: tabs are still control-height-lg', () => {
     const link = rule(shell, ".primary-nav[data-mobile-bar='true'] .primary-nav__link");
     expect(link).toMatch(/min-height:\s*var\(--control-height-lg\)/);
-    expect(rule(shell, ".app-shell[data-has-bottom-bar='true'] .app-shell__main")).toMatch(
-      /var\(--control-height-lg\)/,
-    );
+  });
+
+  // R6 replaced the assumed bar height in the page's bottom padding with the
+  // measured one (the bar can grow with text size), so this now pins that.
+  it('the content clears the bar by its MEASURED height, not an assumed one', () => {
+    const body = rule(shell, ".app-shell[data-has-bottom-bar='true'] .app-shell__main");
+    expect(body).toMatch(/padding-bottom:\s*calc\(var\(--chrome-bottom\)\s*\+\s*var\(--stock-actions-height\)/);
+    expect(body).not.toMatch(/control-height/);
   });
 });

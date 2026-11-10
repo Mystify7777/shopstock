@@ -14,8 +14,13 @@ const GAP_PX = 8;
  * so the focused control ends up hidden behind it. This measures the chrome and
  * publishes how much of the top and bottom of the viewport it covers:
  *
- *   --chrome-top      px covered at the top   (the header)
- *   --chrome-bottom   px covered at the bottom (the mobile bar, 0 when absent)
+ *   --chrome-top         px covered at the top   (the header)
+ *   --chrome-bottom      px covered at the bottom (the mobile bar plus a small
+ *                        gap, 0 when absent)
+ *   --chrome-bottom-nav  the mobile bar's own height, no gap (R6): the stock
+ *                        action bar and the undo notice are offset from the
+ *                        bottom by this, so they stack on the measured bar
+ *                        instead of an assumed one
  *
  * on the document element, where the stylesheet turns them into
  * scroll-padding. They are measured, not hard-coded, because those heights
@@ -54,6 +59,7 @@ export function useFixedChromeInsets(shellRef) {
       const barIsFixed = Boolean(bar) && getComputedStyle(bar).position === 'fixed' && barRect.height > 0;
       const barCovers = barIsFixed ? Math.ceil(window.innerHeight - barRect.top) : 0;
       root.style.setProperty('--chrome-bottom', `${cap(barCovers > 0 ? barCovers + GAP_PX : 0)}px`);
+      root.style.setProperty('--chrome-bottom-nav', `${cap(barCovers)}px`);
     }
 
     update();
@@ -67,6 +73,7 @@ export function useFixedChromeInsets(shellRef) {
       window.removeEventListener('resize', update);
       root.style.removeProperty('--chrome-top');
       root.style.removeProperty('--chrome-bottom');
+      root.style.removeProperty('--chrome-bottom-nav');
     };
   }, [shellRef]);
 }

@@ -40,15 +40,15 @@
   }
 }
 
-/* A navigation link that looks like the app's secondary button. */
+/* Edit is a navigation link drawn as a quiet action (redesign R6): text only, so
+   it does not compete with the stock actions. It keeps a 44px target. */
 .product-detail__edit {
   display: inline-flex;
   align-items: center;
   min-height: var(--control-height);
-  padding: 0 var(--space-4);
-  background: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-strong);
+  padding: 0 var(--space-3);
+  color: var(--color-primary-active);
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   font-weight: var(--font-weight-medium);
   text-decoration: none;
@@ -56,7 +56,11 @@
 
 .product-detail__edit:hover {
   background: var(--color-surface-hover);
-  color: var(--color-text);
+  color: var(--color-primary-active);
+}
+
+.product-detail__edit:active {
+  background: var(--color-surface-active);
 }
 
 .product-detail__summary {
@@ -67,43 +71,41 @@
   margin: 0 0 var(--space-1);
 }
 
+/* Quantity is the dominant figure on the page (redesign R6): the display size,
+   tabular, with a small label and the shared status badge beside it. */
 .product-detail__quantity {
-  font-size: var(--font-size-heading-section);
-  font-weight: var(--font-weight-semibold);
-  font-variant-numeric: var(--font-numeric);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
 }
 
-.stock-badge {
-  display: inline-block;
-  margin-inline-start: var(--space-2);
-  padding: 0 var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-helper);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-compact);
-  vertical-align: middle;
-}
-
-.stock-badge--ok {
+.product-detail__quantity-label {
   color: var(--color-text-secondary);
-  font-weight: var(--font-weight-regular);
+  font-size: var(--font-size-label);
 }
 
-.stock-badge--low {
-  background: var(--color-stock-low-bg);
-  color: var(--color-stock-low-fg);
-  border-color: var(--color-stock-low-border);
+.product-detail__quantity-figure {
+  font-size: var(--font-size-display);
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: var(--font-numeric);
+  line-height: var(--line-height-compact);
+  overflow-wrap: anywhere;
 }
 
-.stock-badge--out {
-  background: var(--color-stock-out-bg);
-  color: var(--color-stock-out-fg);
-  border-color: var(--color-stock-out-border);
+.product-detail__summary .badge {
+  align-self: center;
 }
 
 /* ---------------------------------------------------------------------
  * Actions
+ *
+ * On a wide screen the actions sit in the page under the summary. On a phone
+ * they become a bar fixed to the bottom, ON TOP of the mobile bottom bar
+ * (offset by its measured height) and UNDER the undo notice. Stacking, bottom
+ * to top: bottom bar -> this bar -> undo notice. Heights are measured and
+ * published (--chrome-bottom-nav, --stock-actions-height); nothing here assumes
+ * a pixel value for them.
  * ------------------------------------------------------------------- */
 
 .product-detail__actions {
@@ -113,7 +115,54 @@
 }
 
 .product-detail__actions button {
-  flex: 1;
+  flex: 0 1 auto;
+  padding-inline: var(--space-5);
+}
+
+@media (max-width: 47.999rem) {
+  .product-detail__actions button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: var(--space-2);
+    /* With enlarged text a label wraps inside its button instead of being clipped. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* INTENTIONAL EXCEPTION to "the stock-action bar is fixed on a phone": it is
+   fixed only when the viewport is tall enough to hold fixed chrome and still
+   leave a usable content area. A rem media query follows the user's text size
+   and zoom (both shrink the viewport measured in rem), and a phone held sideways
+   is short too. Below this height the bar stays in the page, as on a wide
+   screen: nothing is covered and nothing moves. (At 200% text on a 320px phone
+   the fixed bottom chrome measured 404px of a 760px viewport.) */
+@media (max-width: 47.999rem) and (min-height: 36rem) {
+  .product-detail__actions {
+    position: fixed;
+    inset-inline: 0;
+    bottom: var(--chrome-bottom-nav);
+    z-index: var(--z-sticky);
+    margin: 0;
+    padding: var(--space-2) var(--gutter);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* While a text field has focus (the phone's keyboard is open) the bar leaves
+     the fixed layer and rests just below the page's content, in the clearance
+     that is already reserved for it, so it cannot cover the field. It is taken
+     OUT of the flow rather than put into it: nothing above it moves when focus
+     changes, so a tap on Save cannot slide away between pointer-down and
+     pointer-up. Only its position changes; the buttons stay focusable. */
+  .product-detail__actions[data-text-entry='true'] {
+    position: absolute;
+    /* The same edge-to-edge width as when fixed (the page sits inside the gutters),
+       so the bar's height, and with it the reservation, does not change. */
+    inset-inline: calc(-1 * var(--gutter));
+    bottom: calc(-1 * var(--stock-actions-height));
+    z-index: auto;
+  }
 }
 
 /* The open form's button reads as selected: tint + weight + border. */
@@ -126,7 +175,7 @@
 
 /* ---------------------------------------------------------------------
  * Undo notice (page-local). Fixed so it never shifts the page; sits above
- * the mobile bottom bar.
+ * the mobile bottom bar and the stock-action bar.
  * ------------------------------------------------------------------- */
 
 .undo-slot:empty {
@@ -139,13 +188,15 @@
    the root scroll-padding in shell.css, which also accounts for the header and
    the bottom bar). 0px whenever there is no notice. */
 .product-detail {
+  position: relative; /* the stock-action bar rests against the page's end while a field has focus */
   padding-bottom: var(--undo-clearance);
 }
 
 .undo-notice {
   position: fixed;
   inset-inline: var(--gutter);
-  bottom: calc(var(--control-height-lg) + var(--space-4) + env(safe-area-inset-bottom, 0px));
+  /* On top of the measured bottom bar and stock-action bar (see Actions). */
+  bottom: calc(var(--chrome-bottom-nav) + var(--stock-actions-height) + var(--space-4));
   z-index: var(--z-toast);
   display: flex;
   flex-wrap: wrap;
@@ -243,20 +294,25 @@
   margin-bottom: var(--space-3);
 }
 
+/* One bordered list with dividers between entries (redesign R6), not a card per
+   entry. */
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
 }
 
 .history-entry {
   padding: var(--space-3) var(--space-4);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
+}
+
+.history-entry + .history-entry {
+  border-top: 1px solid var(--color-border);
 }
 
 .history-entry__main {
@@ -267,7 +323,7 @@
 }
 
 .history-entry__amount {
-  font-size: var(--font-size-heading-section);
+  font-size: var(--font-size-quantity);
   font-weight: var(--font-weight-bold);
   font-variant-numeric: var(--font-numeric);
 }

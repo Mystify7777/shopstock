@@ -254,6 +254,18 @@
      cover. They rest at 0 and feed scroll-padding in shell.css. */
   --chrome-top: 0px;
   --chrome-bottom: 0px;
+
+  /* Stacking at the bottom of a phone (redesign R6), measured, never assumed:
+       bottom bar  ->  stock-action bar  ->  undo notice
+     --chrome-bottom-nav: the mobile bar's own height (no gap), published by
+       hooks/useFixedChromeInsets.js. The stock-action bar and the notice sit
+       on top of it.
+     --stock-actions-height: the stock-action bar's own height while it is
+       fixed, published by ProductDetailPage; 0 when absent or in the page flow.
+     Both rest at 0 and feed the offsets and clearance in shell.css and
+     product-detail.css. */
+  --chrome-bottom-nav: 0px;
+  --stock-actions-height: 0px;
 }
 
 @media (min-width: 48rem) {

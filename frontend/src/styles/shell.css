@@ -16,13 +16,17 @@
 
 /* Keyboard focus must not be scrolled underneath the fixed chrome. The heights
    are measured and published by hooks/useFixedChromeInsets.js (header and
-   mobile bar) and ProductDetailPage (undo notice); this is the one place they
-   become scroll-padding, so competing rules cannot override each other. The
-   notice sits above the bar and its measurement already includes it, so the
-   larger of the two is the clearance. */
+   mobile bar) and ProductDetailPage (stock-action bar, undo notice); this is
+   the one place they become scroll-padding, so competing rules cannot override
+   each other. The stock-action bar sits on top of the mobile bar, so their
+   heights add. The notice sits above both and its measurement already includes
+   them, so the larger of the two is the clearance. */
 html {
   scroll-padding-top: var(--chrome-top);
-  scroll-padding-bottom: max(var(--chrome-bottom), var(--undo-clearance));
+  scroll-padding-bottom: max(
+    calc(var(--chrome-bottom) + var(--stock-actions-height)),
+    var(--undo-clearance)
+  );
 }
 
 .app-shell {
@@ -201,9 +205,12 @@ html {
     hyphens: auto;
   }
 
-  /* Keep page content clear of the fixed bar. */
+  /* Keep page content clear of the fixed chrome: the bar's measured height
+     (--chrome-bottom, which includes a small gap) plus the stock-action bar's
+     measured height when a page shows one, plus room to breathe. Measured, so it
+     follows text size, a wrapping bar and the device's safe-area inset. */
   .app-shell[data-has-bottom-bar='true'] .app-shell__main {
-    padding-bottom: calc(var(--control-height-lg) + var(--space-5) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(var(--chrome-bottom) + var(--stock-actions-height) + var(--space-4));
   }
 }
 

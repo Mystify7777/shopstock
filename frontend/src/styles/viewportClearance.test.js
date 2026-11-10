@@ -36,8 +36,10 @@ describe('root scroll-padding (keeps focus clear of the fixed chrome)', () => {
     expect(rootRule).toMatch(/scroll-padding-top:\s*var\(--chrome-top\)\s*;/);
   });
 
-  it('the bottom clears the larger of the mobile bar and the undo notice (the notice measurement already includes the bar)', () => {
-    expect(rootRule).toMatch(/scroll-padding-bottom:\s*max\(\s*var\(--chrome-bottom\)\s*,\s*var\(--undo-clearance\)\s*\)\s*;/);
+  it('the bottom clears the larger of (mobile bar + stock-action bar) and the undo notice (the notice measurement already includes both)', () => {
+    expect(rootRule).toMatch(
+      /scroll-padding-bottom:\s*max\(\s*calc\(\s*var\(--chrome-bottom\)\s*\+\s*var\(--stock-actions-height\)\s*\)\s*,\s*var\(--undo-clearance\)\s*\)\s*;/,
+    );
   });
 
   it('the page still reserves room at the bottom for the notice, so the last content can scroll above it', () => {
@@ -46,7 +48,7 @@ describe('root scroll-padding (keeps focus clear of the fixed chrome)', () => {
 });
 
 describe('runtime tokens', () => {
-  it.each(['--chrome-top', '--chrome-bottom', '--undo-clearance'])('%s rests at 0px until something is measured', (name) => {
+  it.each(['--chrome-top', '--chrome-bottom', '--chrome-bottom-nav', '--stock-actions-height', '--undo-clearance'])('%s rests at 0px until something is measured', (name) => {
     expect(sheets['tokens.css']).toMatch(new RegExp(`${name}:\\s*0px\\s*;`));
   });
 });

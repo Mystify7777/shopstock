@@ -90,6 +90,16 @@ function fieldErrorIds(prefix, errors, field) {
  * unit and classification names (a Product holds only ids), and Product
  * Change History (no read path exists).
  */
+// R6: does this element open a phone's on-screen keyboard?
+function isTextEntry(element) {
+  return (
+    element instanceof Element &&
+    element.matches(
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select'
+    )
+  );
+}
+
 export default function ProductDetailPage() {
   const { productService, stockEventService } = useAppContext();
   const { id } = useParams();
@@ -245,6 +255,65 @@ export default function ProductDetailPage() {
       root.style.removeProperty('--undo-clearance');
     };
   }, [undoToast]);
+
+  // R6: the stock-action bar is fixed to the bottom on a phone. While a text
+  // field has focus (which is what opens a phone's on-screen keyboard) it leaves
+  // the fixed layer and sits at the end of the page instead, so it cannot cover
+  // the field. Only POSITION changes, and it changes to ABSOLUTE (out of flow,
+  // with its height still reserved), never to in-flow: an in-flow bar would move
+  // the form when the field loses focus, and a tap on Save would slide away
+  // between pointer-down and pointer-up. The buttons stay rendered and
+  // focusable, because closing a stock form returns focus to them. This is
+  // focus-based, not a guess from viewport height, and it also applies with a
+  // physical keyboard.
+  const actionsBarRef = useRef(null);
+  const [textEntryFocused, setTextEntryFocused] = useState(false);
+  useEffect(() => {
+    const onFocusIn = (event) => setTextEntryFocused(isTextEntry(event.target));
+    // Moving between two fields fires focusout then focusin; do not flicker.
+    const onFocusOut = (event) => {
+      if (!isTextEntry(event.relatedTarget)) setTextEntryFocused(false);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
+
+  // A focused field that disappears (its form closed) fires no focusout, so
+  // re-read where focus actually is whenever a form opens or closes.
+  useEffect(() => {
+    setTextEntryFocused(isTextEntry(document.activeElement));
+  }, [showAddForm, showRemoveForm]);
+
+  // Publish the action bar's real height while it is OUT OF THE PAGE FLOW, that
+  // is fixed, or absolute while a field has focus (0 on wide screens, where it
+  // is in the page). The reservation is therefore the same in both states, so
+  // nothing moves when focus changes. The notice and the page's bottom clearance
+  // are measured, not assumed. The bar sits on top of the mobile bottom bar
+  // (--chrome-bottom-nav) and under the undo notice.
+  const productLoaded = productResource.status === 'success' && Boolean(productResource.data);
+  useEffect(() => {
+    const bar = actionsBarRef.current;
+    if (!productLoaded || !bar) return undefined;
+    const root = document.documentElement;
+    const update = () => {
+      const { position } = getComputedStyle(bar);
+      const outOfFlow = position === 'fixed' || position === 'absolute';
+      root.style.setProperty('--stock-actions-height', `${outOfFlow ? Math.ceil(bar.getBoundingClientRect().height) : 0}px`);
+    };
+    update();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    observer?.observe(bar);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--stock-actions-height');
+    };
+  }, [productLoaded, textEntryFocused]);
 
   // The over-removal dialog opens on Cancel: the safe choice, so a
   // stray Enter or Space cannot confirm a destructive removal.
@@ -572,6 +641,7 @@ export default function ProductDetailPage() {
         {canBeReversed(entry) && (
           <button
             type="button"
+            className="quiet-action"
             ref={(element) => {
               if (element) historyReverseRefs.current.set(entry.id, element);
               else historyReverseRefs.current.delete(entry.id);
@@ -640,21 +710,34 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="product-detail__summary" aria-busy={productResource.isReloading}>
+                {/* Quantity is the dominant figure; the status is the shared badge. No unit:
+                    the product only carries a unit id, and the page does not resolve it. */}
                 <p className="product-detail__quantity">
-                  Quantity: {product.quantity}
+                  <span className="product-detail__quantity-label">Quantity</span>{' '}
+                  <span className="product-detail__quantity-figure">{product.quantity}</span>{' '}
                   {lowStock ? (
-                    <span className={`stock-badge stock-badge--${status === STOCK_STATUS.OUT ? 'out' : 'low'}`}>{status}</span>
+                    <span className={`badge badge--${status === STOCK_STATUS.OUT ? 'out' : 'low'}`}>{status}</span>
                   ) : (
-                    <span className="stock-badge stock-badge--ok">In stock</span>
+                    <span className="badge badge--ok">In stock</span>
                   )}
                 </p>
-                {hasPrice && <p>Selling price: {moneyFormat.format(product.sellingPrice)}</p>}
+                {hasPrice && (
+                  <p>
+                    Selling price: <span className="product-detail__currency">₹</span>
+                    {moneyFormat.format(product.sellingPrice)}
+                  </p>
+                )}
               </div>
 
-              <div className="product-detail__actions">
+              <div
+                className="product-detail__actions"
+                ref={actionsBarRef}
+                data-text-entry={textEntryFocused ? 'true' : undefined}
+              >
                 <button
                   ref={addButtonRef}
                   type="button"
+                  className="primary-action"
                   onClick={showAddForm ? closeAddForm : openAddForm}
                   aria-expanded={showAddForm}
                   aria-controls="add-stock-form"
