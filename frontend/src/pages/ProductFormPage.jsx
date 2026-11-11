@@ -159,7 +159,7 @@ function ProductForm({ product }) {
 
       <form onSubmit={handleSubmit} noValidate>
         {hasErrors && (
-          <div role="alert" id="product-form-errors" className="form-errors">
+          <div role="alert" id="product-form-errors" className="notice notice--danger">
             <ul>
               {errors.map((message) => (
                 <li key={message}>{message}</li>
@@ -169,7 +169,7 @@ function ProductForm({ product }) {
         )}
 
         {saveFailed && (
-          <p role="alert" id="product-form-save-error" className="form-errors">
+          <p role="alert" id="product-form-save-error" className="notice notice--danger">
             We couldn&rsquo;t save this product. Your changes are still here &mdash; please try again.
           </p>
         )}

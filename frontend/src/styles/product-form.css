@@ -1,6 +1,8 @@
 /*
- * Product create/edit form (Phase 7F). Tokens only; no gradients, no
- * decoration. Errors use the shared .form-errors block (product-detail.css).
+ * Product create/edit form (R7a). Tokens only; no gradients, no decoration.
+ * Errors use the shared .notice.notice--danger (base.css). The stock forms on the
+ * product detail page keep their own .form-errors (product-detail.css); this
+ * file does not style it.
  */
 
 .product-form {
@@ -26,17 +28,20 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* A section, not a card (redesign R7a): the fieldset and its legend stay, so the
+     fields keep their accessible grouping, but the box around them is gone. */
   margin: 0;
-  padding: var(--space-4);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
+  padding: 0;
+  border: 0;
+  min-width: 0; /* a fieldset otherwise refuses to shrink below its content */
 }
 
 .product-form__group legend {
-  padding: 0 var(--space-2);
-  font-size: var(--font-size-label);
+  padding: 0;
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-heading-section);
   font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-heading);
 }
 
 .product-form__field {
@@ -66,17 +71,20 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+  /* A hairline sets the actions apart from the fields, in place of the old box. */
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
 }
 
-/* Cancel is a real link that looks like the secondary button. */
+/* Cancel is a real link drawn as a quiet action (R7a): text only, so Save is
+   the one action that stands out. It keeps a 44px target. */
 .product-form__cancel {
   display: inline-flex;
   align-items: center;
   min-height: var(--control-height);
   padding: 0 var(--space-4);
-  background: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-strong);
+  color: var(--color-primary-active);
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   font-weight: var(--font-weight-medium);
   text-decoration: none;
@@ -84,5 +92,15 @@
 
 .product-form__cancel:hover {
   background: var(--color-surface-hover);
-  color: var(--color-text);
+  color: var(--color-primary-active);
+}
+
+.product-form__cancel:active {
+  background: var(--color-surface-active);
+}
+
+/* The error list keeps the bullet indent the old .form-errors list had. */
+.product-form .notice ul {
+  margin: 0;
+  padding-inline-start: calc(var(--space-5) - var(--space-3));
 }
