@@ -5,11 +5,15 @@ import { AUTH_REASON } from '../hooks/useAuthSession.js';
 import { useDocumentTitle } from '../hooks/useDocumentTitle.js';
 import { formatDocumentTitle } from '../components/shell/routeTitle.js';
 
-// Presentation only (Phase 7B). All credential handling stays in
-// authManager.login(); this page collects two fields, calls it, and turns
-// its failures into plain-language messages. On success authManager's
-// status notification moves AuthGate on to the app -- this page does not
-// navigate.
+// Presentation only (Phase 7B; restyled in redesign R7b). All credential
+// handling stays in authManager.login(); this page collects two fields, calls
+// it, and turns its failures into plain-language messages. On success
+// authManager's status notification moves AuthGate on to the app -- this page
+// does not navigate.
+//
+// The messages (a session reason, a failed attempt) are the shared notices. The
+// one line of new copy states what a trusted device can do: it says nothing
+// about working offline before the first sign-in.
 
 const REASON_NOTICES = {
   [AUTH_REASON.EXPIRED]: 'Your session expired. Sign in again.',
@@ -84,9 +88,19 @@ export default function LoginPage({ reason = null, onCancel }) {
       <div className="login__card">
         <h1>Sign in to ShopStock</h1>
 
-        {notice && <p role="status">{notice}</p>}
+        {/* Not shown when the app is already usable and sign-in is optional (onCancel):
+            that case has its own explanation just below. */}
+        {!onCancel && <p className="login__intro">Works offline after you sign in once on this device.</p>}
+
+        {notice && (
+          <p role="status" className="notice notice--warning">
+            {notice}
+          </p>
+        )}
         {onCancel && (
-          <p>Sign in to resume syncing. The data on this device stays exactly as it is.</p>
+          <p className="login__intro">
+            Sign in to resume syncing. The data on this device stays exactly as it is.
+          </p>
         )}
 
         <form onSubmit={handleSubmit} noValidate>
@@ -119,7 +133,7 @@ export default function LoginPage({ reason = null, onCancel }) {
           </div>
 
           {error && (
-            <p role="alert" id="login-error" className="login__error">
+            <p role="alert" id="login-error" className="notice notice--danger">
               {error}
             </p>
           )}
@@ -129,7 +143,7 @@ export default function LoginPage({ reason = null, onCancel }) {
               {submitting ? 'Signing in\u2026' : 'Sign in'}
             </button>
             {onCancel && (
-              <button type="button" onClick={onCancel} disabled={submitting}>
+              <button type="button" className="quiet-action" onClick={onCancel} disabled={submitting}>
                 Continue without signing in
               </button>
             )}
