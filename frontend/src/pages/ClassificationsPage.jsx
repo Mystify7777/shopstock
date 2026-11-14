@@ -176,18 +176,26 @@ export default function ClassificationsPage({ type }) {
           aria-invalid={addError ? 'true' : undefined}
           aria-describedby={addError ? 'classification-add-error' : undefined}
         />
-        <button type="submit" disabled={pending}>
+        <button type="submit" className="primary-action" disabled={pending}>
           Add {config.singular}
         </button>
         {addError && (
-          <p role="alert" id="classification-add-error">
+          <p role="alert" id="classification-add-error" className="notice notice--danger">
             {addError}
           </p>
         )}
       </form>
 
-      {notice && <p role="status">{notice}</p>}
-      {actionError && <p role="alert">{actionError}</p>}
+      {notice && (
+        <p role="status" className="notice notice--neutral">
+          {notice}
+        </p>
+      )}
+      {actionError && (
+        <p role="alert" className="notice notice--danger">
+          {actionError}
+        </p>
+      )}
 
       <ResourceView
         resource={list}
@@ -207,7 +215,7 @@ export default function ClassificationsPage({ type }) {
                 {active.length === 0 ? (
                   <p>No {config.plural.toLowerCase()} yet. Add one above.</p>
                 ) : (
-                  <ul>
+                  <ul className="classifications__list">
                     {active.map((item) => (
                       <li key={item.id}>
                         {editingId === item.id ? (
@@ -221,23 +229,24 @@ export default function ClassificationsPage({ type }) {
                               aria-invalid={editError ? 'true' : undefined}
                               aria-describedby={editError ? `rename-error-${item.id}` : undefined}
                             />
-                            <button type="submit" disabled={pending}>
+                            <button type="submit" className="primary-action" disabled={pending}>
                               Save
                             </button>
-                            <button type="button" onClick={() => setEditingId(null)} disabled={pending}>
+                            <button type="button" className="quiet-action" onClick={() => setEditingId(null)} disabled={pending}>
                               Cancel
                             </button>
                             {editError && (
-                              <p role="alert" id={`rename-error-${item.id}`}>
+                              <p role="alert" id={`rename-error-${item.id}`} className="notice notice--danger">
                                 {editError}
                               </p>
                             )}
                           </form>
                         ) : (
                           <>
-                            <span>{item.name}</span>{' '}
+                            <span className="classifications__name">{item.name}</span>{' '}
                             <button
                               type="button"
+                              className="quiet-action"
                               onClick={() => startRename(item)}
                               aria-label={`Rename ${item.name}`}
                               disabled={pending}
@@ -246,6 +255,7 @@ export default function ClassificationsPage({ type }) {
                             </button>
                             <button
                               type="button"
+                              className="quiet-action"
                               onClick={() => handleArchive(item)}
                               aria-label={`Archive ${item.name}`}
                               disabled={pending}
@@ -255,6 +265,7 @@ export default function ClassificationsPage({ type }) {
                             {config.removable && (
                               <button
                                 type="button"
+                                className="quiet-action"
                                 ref={(element) => {
                                   if (element) removeButtonRefs.current.set(item.id, element);
                                   else removeButtonRefs.current.delete(item.id);
@@ -289,12 +300,13 @@ export default function ClassificationsPage({ type }) {
               {archived.length > 0 && (
                 <section aria-labelledby="classifications-archived-heading">
                   <h2 id="classifications-archived-heading">Archived {config.plural.toLowerCase()}</h2>
-                  <ul>
+                  <ul className="classifications__list">
                     {archived.map((item) => (
                       <li key={item.id}>
-                        <span>{item.name}</span>{' '}
+                        <span className="classifications__name">{item.name}</span>{' '}
                         <button
                           type="button"
+                          className="quiet-action"
                           onClick={() => handleRestore(item)}
                           aria-label={`Restore ${item.name}`}
                           disabled={pending}

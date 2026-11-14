@@ -2,24 +2,37 @@
  * Classification management (Phase 7C). Tokens only.
  */
 
+.classifications h1 {
+  /* "Classifications" is one long word: at large text it is wider than a phone's
+     column, so it must be allowed to break instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
 .classifications__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
+  /* Segmented tabs (redesign R8a): as many columns as fit at a readable width, so
+     four tabs sit 2 x 2 on a phone and in a row on a wide screen, and stack at
+     large text. All four are always visible: nothing scrolls sideways. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-2);
   margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
 }
 
 .classifications__tabs a {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: center;
   min-height: var(--control-height);
   padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
+  text-align: center;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .classifications__tabs a:hover {
@@ -27,10 +40,12 @@
   color: var(--color-text);
 }
 
-/* Current type: tint + weight + underline bar, not color alone. */
+/* Current type: fill + border + weight + bar. The state is also in the markup
+   (aria-current), and never rests on color alone. */
 .classifications__tabs a[aria-current='page'] {
   background: var(--color-selected-bg);
   color: var(--color-selected-fg);
+  border-color: var(--color-selected-border);
   font-weight: var(--font-weight-semibold);
   box-shadow: inset 0 calc(var(--focus-ring-width) * -1) 0 var(--color-selected-border);
 }
@@ -49,11 +64,13 @@
   font-weight: var(--font-weight-medium);
 }
 
-.classifications form > p[role='alert'] {
+.classifications form > .notice {
   flex-basis: 100%;
-  margin: 0;
-  color: var(--color-danger-fg);
-  font-size: var(--font-size-error);
+}
+
+/* Page-level messages sit between the add form and the list. */
+.classifications > .notice {
+  margin: 0 0 var(--space-4);
 }
 
 .classifications li {
@@ -62,6 +79,62 @@
 
 .classifications li > button {
   margin-inline-start: var(--space-1);
+}
+
+/* The items (redesign R8a): one bordered list with dividers, like the history
+   list, not a card per item. The name takes its own line (a long name wraps, it
+   is never cut), and the actions follow as a wrapping line of quiet buttons.
+   Scoped to these lists: the removal panel's own list (R8b) keeps its rules. */
+.classifications__list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.classifications__list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.classifications__list > li + li {
+  border-top: 1px solid var(--color-border);
+}
+
+.classifications__list > li > button {
+  margin-inline-start: 0;
+}
+
+.classifications__name {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+/* The inline rename form and the removal panel take a full line of their own. */
+.classifications__list > li > form,
+.classifications__list > li > [role='dialog'] {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* The removal panel keeps the width it had before the rows were padded: it spans
+   the whole row, edge to edge, by cancelling the row's inline padding. Inside the
+   padded row it would be 64px narrower at large text, and its buttons would no
+   longer fit. Its own look and behavior are unchanged (R8b owns those). */
+.classifications__list > li > [role='dialog'] {
+  margin-inline: calc(-1 * var(--space-4));
+}
+
+.classifications__tabs li {
+  margin: 0;
 }
 
 /* The inline, non-modal confirmation (role="dialog", the same pattern as the
