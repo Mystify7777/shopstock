@@ -137,34 +137,85 @@
   margin: 0;
 }
 
-/* The inline, non-modal confirmation (role="dialog", the same pattern as the
-   stock over-removal warning), styled as a panel when inside this screen. */
+/* The removal panel (redesign R8b). The inline, non-modal confirmation
+   (role="dialog", the same pattern as the stock over-removal warning), styled as
+   a flat bordered panel inside its row: no shadow, no elevation. Presentation
+   only; it stays inline and non-modal, and its focus rules are in the component. */
 .classifications [role='dialog'] {
+  /* One column of blocks, with the buttons on a wrapping line at the end. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-2);
   margin-top: var(--space-3);
   padding: var(--space-4);
-  background: var(--color-surface-elevated);
-  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-2);
+}
+
+.classifications [role='dialog'] > :not(button) {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
 }
 
 .classifications [role='dialog'] h3 {
-  margin-top: 0;
+  font-size: var(--font-size-heading-section);
+  line-height: var(--line-height-heading);
 }
 
-.classifications [role='dialog'] [role='alert'] {
-  margin: var(--space-3) 0;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-danger-bg);
-  color: var(--color-danger-fg);
-  border: 1px solid var(--color-danger-border);
-  border-radius: var(--radius-control);
+/* The affected products: a compact list, not the page's roomy item rows. */
+.classifications [role='dialog'] ul {
+  padding-inline-start: calc(var(--space-5) - var(--space-1));
 }
 
-.classifications [role='dialog'] [role='alert'] p {
+.classifications [role='dialog'] li {
+  margin: 0 0 var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+/* The two buttons share a line and wrap rather than overflow, and a label wraps
+   inside its button when text is enlarged. */
+.classifications [role='dialog'] > button {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Failures are the shared .notice.notice--danger (base.css); this only lays out
+   what is inside them. */
+.classifications [role='dialog'] .notice p {
   margin: 0 0 var(--space-2);
 }
 
-.classifications [role='dialog'] > button + button {
-  margin-inline-start: var(--space-2);
+.classifications [role='dialog'] .notice > :last-child {
+  margin-bottom: 0;
+}
+
+.classifications [role='dialog'] .notice ul {
+  margin: 0 0 var(--space-2);
+  padding-inline-start: calc(var(--space-5) - var(--space-3));
+}
+
+/* The loading line and the "could not check" panel sit in the row directly (no
+   dialog yet): each takes a full line, and the panel's buttons wrap. */
+.classifications__list > li > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.classifications__list > li > [role='alert'] {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.classifications__list > li > [role='alert'] > p {
+  flex: 1 1 100%;
+  margin: 0;
 }

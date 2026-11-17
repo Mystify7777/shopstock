@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useAsyncResource } from '../hooks/useAsyncResource.js';
 
 // Confirmation + execution of "Remove" for a category, location or tag
-// (Phase 7C). Uses the app's inline, non-modal role="dialog" pattern.
+// (Phase 7C; restyled in redesign R8b: presentation only). Uses the app's
+// inline, non-modal role="dialog" pattern. Its failures are the shared danger
+// notice, Cancel/Close is a quiet action, and the confirm button is the one
+// danger action, in every state (it also re-runs a failed removal).
 //
 // Flow: show who is affected and what will happen -> explicit confirm ->
 // classificationService.removeWithFallback() -> honest outcome.
@@ -127,12 +130,12 @@ export default function ClassificationRemoval({ config, classification, service,
 
   if (preview.status === 'error') {
     return (
-      <div role="alert" onKeyDown={handleKeyDown}>
+      <div role="alert" className="notice notice--danger" onKeyDown={handleKeyDown}>
         <p>Couldn&rsquo;t check which products use this {singular}. Nothing was changed.</p>
-        <button type="button" onClick={preview.reload}>
+        <button type="button" className="quiet-action" onClick={preview.reload}>
           Try again
         </button>
-        <button ref={cancelRef} type="button" onClick={onCancel}>
+        <button ref={cancelRef} type="button" className="quiet-action" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -182,7 +185,7 @@ export default function ClassificationRemoval({ config, classification, service,
       </p>
 
       {failure && failure.status === 'partial' && (
-        <div role="alert">
+        <div role="alert" className="notice notice--danger">
           <p>
             Couldn&rsquo;t update {failure.failures.length} of {countProducts(failure.affectedCount)}, so
             &ldquo;{classification.name}&rdquo; was not removed. Products that were already updated stay
@@ -198,7 +201,7 @@ export default function ClassificationRemoval({ config, classification, service,
       )}
 
       {failure && failure.status === 'archive-failed' && (
-        <div role="alert">
+        <div role="alert" className="notice notice--danger">
           <p>
             Every product was updated, but &ldquo;{classification.name}&rdquo; couldn&rsquo;t be archived.
             Try again to finish.
@@ -207,15 +210,15 @@ export default function ClassificationRemoval({ config, classification, service,
       )}
 
       {unexpectedError && (
-        <div role="alert">
+        <div role="alert" className="notice notice--danger">
           <p>Something went wrong. Nothing more was changed. You can try again.</p>
         </div>
       )}
 
-      <button ref={cancelRef} type="button" onClick={onCancel} disabled={running}>
+      <button ref={cancelRef} type="button" className="quiet-action" onClick={onCancel} disabled={running}>
         {failure || unexpectedError ? 'Close' : 'Cancel'}
       </button>
-      <button type="button" onClick={handleConfirm} disabled={running}>
+      <button type="button" className="danger-action" onClick={handleConfirm} disabled={running}>
         {running ? 'Removing…' : failure || unexpectedError ? 'Try again' : `Remove ${singular}`}
       </button>
     </div>
