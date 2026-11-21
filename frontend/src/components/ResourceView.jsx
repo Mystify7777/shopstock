@@ -3,8 +3,9 @@
  * useAsyncResource() result, so each section of a screen shows them the
  * same way. Content is only rendered once data exists.
  *
- * Deliberately plain: a status line, an alert with a retry button, or the
- * caller's content. Messages are friendly text, not raw error strings --
+ * Deliberately plain (restyled in redesign R9a, presentation only): a quiet
+ * status line, a danger notice with a quiet retry button, or the caller's
+ * content. Messages are friendly text, not raw error strings --
  * unless the caller opts in with `showDetail`, which adds the underlying
  * error's own message on a separate line (for screens that already showed
  * it before this component existed).
@@ -19,15 +20,20 @@
  */
 export default function ResourceView({ resource, loadingMessage, errorMessage, showDetail = false, children }) {
   if (resource.status === 'loading') {
-    return <p role="status">{loadingMessage}</p>;
+    return (
+      <p role="status" className="resource-view-loading">
+        {loadingMessage}
+      </p>
+    );
   }
 
   if (resource.status === 'error') {
     return (
-      <div role="alert" className="resource-error">
+      <div role="alert" className="notice notice--danger resource-view-error">
         <p>{errorMessage}</p>
         {showDetail && resource.error?.message && <p>{resource.error.message}</p>}
-        <button type="button" onClick={resource.reload}>
+        {/* Recovery is quiet; nothing here is destructive or primary. */}
+        <button type="button" className="quiet-action" onClick={resource.reload}>
           Try again
         </button>
       </div>

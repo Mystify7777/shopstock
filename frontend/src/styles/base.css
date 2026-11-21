@@ -191,6 +191,41 @@ textarea:disabled {
   border-color: var(--color-danger-fg);
 }
 
+/* Quiet link (redesign R9a): the link counterpart of .quiet-action, for a way
+   out or back that must not compete with anything primary. Look only: size it
+   with .touch-link, as .primary-action-link does, so there is one 44px rule.
+   Consumers: the not-found state (R9a) and the crash fallback's "Go to
+   Dashboard" (R9b). Existing links that look like this are left as they are. */
+.quiet-link {
+  padding: 0 var(--space-3);
+  color: var(--color-primary-active);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.quiet-link:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary-active);
+}
+
+.quiet-link:active {
+  background: var(--color-surface-active);
+}
+
+/* ResourceView (R9a): a loading section is quiet text, not a box, so a section
+   that loads in a moment does not flash one; a failed section is a danger
+   notice whose message(s) stack above its quiet retry button. */
+.resource-view-loading {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.resource-view-error p {
+  margin: 0 0 var(--space-2);
+}
+
 /* Stock-status badge: a pill whose words carry the status; color only
    reinforces it. Consumers: product row (R3, reused by R4), detail (R6).
    "ok" is plain text so rows that need attention stand out. */
