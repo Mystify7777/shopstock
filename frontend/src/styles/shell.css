@@ -273,14 +273,15 @@ html {
   width: 100%;
   max-width: calc(var(--layout-width-narrow) * 0.75);
   padding: var(--space-5);
-  background: var(--color-surface-elevated);
+  /* A flat bordered card (redesign R9b): no shadow, no elevation. */
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-2);
 }
 
 .app-error__card h1 {
   margin-top: 0;
+  overflow-wrap: anywhere; /* last resort, as on the login card: a long word must never push the card off screen */
 }
 
 .app-error__actions {
@@ -290,10 +291,11 @@ html {
   gap: var(--space-3);
 }
 
-.app-error__home {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--control-height);
+/* At large text sizes on a narrow screen an action's label can be wider than the
+   card. Let it shrink to the card and wrap its words instead of overflowing. */
+.app-error__actions > * {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------------

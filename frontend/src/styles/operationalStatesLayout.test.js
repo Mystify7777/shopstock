@@ -1,7 +1,7 @@
 // Redesign R9a: the shared rules for ResourceView's states, the not-found state
-// and the .quiet-link primitive, at the CSS level. Each assertion is scoped to
-// the selector whose invariant it protects. The crash fallback (R9b) and the
-// auth loading screen (frozen) are not asserted here.
+// and the .quiet-link primitive, at the CSS level, plus (R9b) the crash
+// fallback's card. Each assertion is scoped to the selector whose invariant it
+// protects. The auth loading screen (frozen) is not asserted here.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -92,6 +92,35 @@ describe('not found', () => {
   });
   it('the old paragraph rule is gone', () => {
     expect(shell).not.toMatch(/\.not-found-state p\b/);
+  });
+});
+
+describe('crash fallback (R9b)', () => {
+  const card = rule(shell, '.app-error__card');
+  it('the card is flat: the plain surface and a border, with no shadow and no elevated fill', () => {
+    expect(card).toMatch(/background:\s*var\(--color-surface\)/);
+    expect(card).toMatch(/border:\s*1px solid var\(--color-border\)/);
+    expect(card).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(card).not.toMatch(/box-shadow|--shadow|surface-elevated/);
+  });
+  it('matches the flat Login card, so the two full-screen cards look the same', () => {
+    const login = rule(shell, '.login__card');
+    for (const decl of ['background', 'border', 'border-radius']) {
+      expect(card.match(new RegExp(`${decl}:[^;]*;`))[0]).toBe(login.match(new RegExp(`${decl}:[^;]*;`))[0]);
+    }
+  });
+  it('the old hand-rolled link rule is gone: the 44px target is .touch-link, the look is .quiet-link', () => {
+    expect(rulesOf(shell).some((r) => r.selectors.includes('.app-error__home'))).toBe(false);
+  });
+  it('large text on a narrow screen cannot push the card off screen: the heading and both actions may wrap', () => {
+    expect(rule(shell, '.app-error__card h1')).toMatch(/overflow-wrap:\s*anywhere/);
+    const actions = rule(shell, '.app-error__actions > *');
+    expect(actions).toMatch(/max-width:\s*100%/);
+    expect(actions).toMatch(/overflow-wrap:\s*anywhere/);
+    expect(actions).not.toMatch(/(?<![\w-])(?:min-height|height|min-width|width)\s*:/); // never shrink the 44px target
+  });
+  it('the full-height .app-error rule is untouched (viewportClearance.test.js pins it)', () => {
+    expect(rule(shell, '.app-error')).toMatch(/min-height:\s*100dvh/);
   });
 });
 

@@ -4,6 +4,9 @@ import React, { useEffect, useRef } from 'react';
  * Last-resort fallback (Phase 7H). Replaces the whole app if rendering
  * throws, so the user never faces a blank screen.
  *
+ * Redesign R9b (presentation only): a flat bordered card, Reload as the one
+ * primary action, and the way out as a quiet link.
+ *
  * It deliberately depends on nothing else in the app -- no router, context
  * or store -- because any of those may be what failed. Recovery therefore
  * uses a plain reload and a plain link (a full page load).
@@ -31,7 +34,7 @@ function AppErrorFallback() {
           <button type="button" className="primary-action" onClick={() => window.location.reload()}>
             Reload ShopStock
           </button>
-          <a href="/" className="app-error__home">
+          <a href="/" className="touch-link quiet-link">
             Go to Dashboard
           </a>
         </div>
