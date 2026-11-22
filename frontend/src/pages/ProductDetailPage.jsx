@@ -91,6 +91,12 @@ function fieldErrorIds(prefix, errors, field) {
  * Change History (no read path exists).
  */
 // R6: does this element open a phone's on-screen keyboard?
+// True while the stock-action bar is fixed to the screen or resting out of the
+// page flow (a phone); false when it sits in the page.
+function isOutOfFlow(bar) {
+  return Boolean(bar) && ['fixed', 'absolute'].includes(getComputedStyle(bar).position);
+}
+
 function isTextEntry(element) {
   return (
     element instanceof Element &&
@@ -287,6 +293,19 @@ export default function ProductDetailPage() {
   useEffect(() => {
     setTextEntryFocused(isTextEntry(document.activeElement));
   }, [showAddForm, showRemoveForm]);
+
+  // On a phone a stock form can open on a short page with its Save button under
+  // the fixed stock-action bar, covering part of its 44px target. Bring Save into
+  // the clear part of the viewport. `nearest` scrolls only if it is needed, and
+  // the root scroll-padding (shell.css) already keeps the result above the bar and
+  // the bottom bar, so there is no offset to maintain here. Where the bar is in the
+  // page (wide screens, short viewports) nothing overlaps and nothing scrolls.
+  useEffect(() => {
+    if (showAddForm && isOutOfFlow(actionsBarRef.current)) addSaveRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [showAddForm]);
+  useEffect(() => {
+    if (showRemoveForm && isOutOfFlow(actionsBarRef.current)) removeSaveRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [showRemoveForm]);
 
   // Publish the action bar's real height while it is OUT OF THE PAGE FLOW, that
   // is fixed, or absolute while a field has focus (0 on wide screens, where it
