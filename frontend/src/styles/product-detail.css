@@ -173,6 +173,18 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* The selected look holds while the button is hovered or pressed. Add Stock is a
+   .primary-action, and the shared primary hover/active rules are more specific
+   than the plain selected rule above, so on hover they paint the primary blue
+   behind its dark text (about 1.3:1; on a phone :hover stays set after a tap).
+   These selectors are more specific than the shared ones and restate the look.
+   They cover both buttons, so Remove Stock keeps its tint too. */
+.product-detail__actions button[aria-expanded='true']:hover:not(:disabled),
+.product-detail__actions button[aria-expanded='true']:active:not(:disabled) {
+  background: var(--color-selected-bg);
+  border-color: var(--color-selected-border);
+}
+
 /* ---------------------------------------------------------------------
  * Undo notice (page-local). Fixed so it never shifts the page; sits above
  * the mobile bottom bar and the stock-action bar.

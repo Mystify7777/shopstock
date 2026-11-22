@@ -144,6 +144,38 @@ describe('stock-action bar: phones', () => {
   });
 });
 
+describe('open-form action button keeps its selected look when hovered or pressed', () => {
+  // Whether these rules win the cascade is verified in a real browser (the
+  // hover and press text measures 8:1, not 1.3:1); this pins what the rules say.
+  const base = read('base.css');
+  const OPEN = ".product-detail__actions button[aria-expanded='true']";
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  it.each([':hover', ':active'])('the %s state restates the selected background and border', (state) => {
+    const body = bodyIn(plain, `${OPEN}${state}:not(:disabled)`);
+    expect(body).toMatch(/background:\s*var\(--color-selected-bg\)/);
+    expect(body).toMatch(/border-color:\s*var\(--color-selected-border\)/);
+    expect(body).not.toMatch(/(?<![\w-])color\s*:/); // the text color is already selected-fg
+  });
+
+  it('the shared primary hover and active rules this guards against still exist', () => {
+    expect(base).toContain(".primary-action:hover:not(:disabled):not([aria-disabled='true'])");
+    expect(base).toContain(".primary-action:active:not(:disabled):not([aria-disabled='true'])");
+  });
+
+  it('the selected text on its selected background clears AA (4.5:1)', () => {
+    const hex = (name) => tokens.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+    expect(contrast(hex('--color-selected-fg'), hex('--color-selected-bg'))).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
 describe('undo notice stacking', () => {
   it('on a phone it sits on the measured bottom bar and the measured action bar, with no assumed height', () => {
     const body = bodyIn(plain, '.undo-notice');
