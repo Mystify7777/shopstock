@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const main = readFileSync(new URL('./main.jsx', import.meta.url), 'utf8');
 const assignments = example.split('\n').filter((line) => /^[A-Z_][A-Z0-9_]*=/.test(line));
 
