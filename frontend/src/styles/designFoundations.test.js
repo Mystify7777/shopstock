@@ -9,7 +9,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const dir = new URL('./', import.meta.url);
-const read = (name) => readFileSync(new URL(name, dir), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const read = (name) =>
+  readFileSync(new URL(name, dir), 'utf8')
+    .replace(/\r\n/g, '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 const base = read('base.css');
 const tokensCss = read('tokens.css');
 
