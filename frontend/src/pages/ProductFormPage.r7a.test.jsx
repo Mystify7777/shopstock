@@ -2,8 +2,9 @@
 // fieldset/legend grouping and ARIA wiring are intact, and its actions are one
 // primary Save plus a quiet Cancel link. Validation, saving, the unchanged-save
 // path and Cancel's destinations are pinned by ProductFormPage.test.jsx, which
-// passes unmodified. The Product Detail page's own forms (R6, frozen) keep their
-// .form-errors block; that is checked here too, from the other side.
+// passes unmodified. The Product Detail page's stock forms use the same shared
+// danger notice (R10 Phase 3 retired their old .form-errors look); that is
+// checked here too, from the other side.
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
@@ -87,8 +88,8 @@ describe('form errors are the shared danger notice', () => {
   });
 });
 
-describe('the product detail page keeps its own .form-errors (R6, frozen)', () => {
-  it('its Add Stock validation error is still a .form-errors block, not a notice', async () => {
+describe('the product detail page uses the same shared danger notice (R10 Phase 3)', () => {
+  it('its Add Stock validation error is a notice--danger, with .form-errors kept only as a layout hook', async () => {
     const productService = { listProducts: vi.fn(), getProduct: vi.fn().mockResolvedValue({ id: 'p1', name: 'Parle-G', quantity: 10 }) };
     const stockEventService = {
       getHistory: vi.fn().mockResolvedValue([]),
@@ -110,8 +111,7 @@ describe('the product detail page keeps its own .form-errors (R6, frozen)', () =
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveAttribute('id', 'add-form-errors');
-    expect(alert).toHaveClass('form-errors');
-    expect(alert).not.toHaveClass('notice');
+    expect(alert).toHaveClass('notice', 'notice--danger', 'form-errors');
   });
 });
 

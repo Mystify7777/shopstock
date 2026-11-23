@@ -672,7 +672,7 @@ export default function ProductDetailPage() {
           </button>
         )}
         {errors && errors.length > 0 && (
-          <div role="alert" className="form-errors">
+          <div role="alert" className="notice notice--danger form-errors">
             <ul>
               {errors.map((message) => (
                 <li key={message}>{message}</li>
@@ -811,7 +811,7 @@ export default function ProductDetailPage() {
               {showAddForm && (
                 <form id="add-stock-form" ref={addFormRef} className="stock-form" onSubmit={handleAddSubmit}>
                   {addErrors.length > 0 && (
-                    <div role="alert" id="add-form-errors" className="form-errors">
+                    <div role="alert" id="add-form-errors" className="notice notice--danger form-errors">
                       <ul>
                         {addErrors.map((message, index) => (
                           <li key={message} id={`add-form-error-${index}`}>
@@ -822,7 +822,7 @@ export default function ProductDetailPage() {
                     </div>
                   )}
                   {addSubmitError && (
-                    <p role="alert" id="add-form-submit-error" className="form-errors">
+                    <p role="alert" id="add-form-submit-error" className="notice notice--danger form-errors">
                       {addSubmitError}
                     </p>
                   )}
@@ -886,7 +886,7 @@ export default function ProductDetailPage() {
               {showRemoveForm && (
                 <form id="remove-stock-form" ref={removeFormRef} className="stock-form" onSubmit={handleRemoveSubmit}>
                   {removeErrors.length > 0 && (
-                    <div role="alert" id="remove-form-errors" className="form-errors">
+                    <div role="alert" id="remove-form-errors" className="notice notice--danger form-errors">
                       <ul>
                         {removeErrors.map((message, index) => (
                           <li key={message} id={`remove-form-error-${index}`}>
@@ -897,7 +897,7 @@ export default function ProductDetailPage() {
                     </div>
                   )}
                   {removeSubmitError && (
-                    <p role="alert" id="remove-form-submit-error" className="form-errors">
+                    <p role="alert" id="remove-form-submit-error" className="notice notice--danger form-errors">
                       {removeSubmitError}
                     </p>
                   )}
@@ -938,7 +938,7 @@ export default function ProductDetailPage() {
                 // it) and closes on Escape while focus is inside it.
                 <div
                   role="dialog"
-                  className="over-remove-warning"
+                  className="notice notice--warning over-remove-warning"
                   ref={overRemoveRef}
                   aria-label="Remove more than the available stock?"
                   aria-describedby="over-remove-message"

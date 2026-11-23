@@ -75,7 +75,7 @@ describe('errors use the shared notice', () => {
       if (/\.notice\b/.test(selector) && !/\bul\b/.test(selector)) expect(body, selector.trim()).not.toMatch(APPEARANCE);
     }
   });
-  it('this stylesheet no longer styles .form-errors (the product detail forms still use it, in their own file)', () => {
+  it('this stylesheet does not style .form-errors (a layout hook of the product detail forms, in their own file)', () => {
     expect(form).not.toMatch(/\.form-errors/);
   });
 });

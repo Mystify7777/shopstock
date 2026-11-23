@@ -1,8 +1,7 @@
 /*
  * Product create/edit form (R7a). Tokens only; no gradients, no decoration.
- * Errors use the shared .notice.notice--danger (base.css). The stock forms on the
- * product detail page keep their own .form-errors (product-detail.css); this
- * file does not style it.
+ * Errors use the shared .notice.notice--danger (base.css). The product detail
+ * stock forms use it too (product-detail.css); this file does not style it.
  */
 
 .product-form {

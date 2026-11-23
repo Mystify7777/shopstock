@@ -176,6 +176,40 @@ describe('open-form action button keeps its selected look when hovered or presse
   });
 });
 
+describe('stock-form errors and the over-removal dialog use the shared notice (R10 Phase 3)', () => {
+  // Rules whose selector list includes this exact selector.
+  const rulesWith = (selector) => [...plain.join('\n').matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, sel]) => sel.split(',').map((x) => x.trim()).includes(selector));
+  const APPEARANCE = /(?<![\w-])(?:background|border|border-color|border-radius|box-shadow|padding|color|font-size|font-weight|line-height)\s*:/;
+
+  it('.form-errors has no rule of its own that draws a look; only the list inside keeps its indent', () => {
+    expect(rulesWith('.form-errors')).toHaveLength(0);
+    const list = rulesWith('.form-errors ul');
+    expect(list).toHaveLength(1);
+    expect(list[0][2]).toMatch(/padding-inline-start:/);
+  });
+
+  it('.over-remove-warning only spaces the dialog; the shared .notice--warning draws it', () => {
+    const own = rulesWith('.over-remove-warning');
+    expect(own).toHaveLength(1);
+    expect(own[0][2]).toMatch(/margin-bottom:\s*var\(--space-4\)/);
+    expect(own[0][2]).not.toMatch(APPEARANCE);
+  });
+
+  it('its paragraph and button spacing are kept', () => {
+    expect(rulesWith('.over-remove-warning p')).toHaveLength(1);
+    expect(rulesWith('.over-remove-warning button + button')).toHaveLength(1);
+  });
+
+  it('no stylesheet draws the old danger or warning look on these classes any more', () => {
+    for (const name of ['product-detail.css', 'product-form.css', 'base.css', 'shell.css', 'dashboard.css']) {
+      const css = read(name);
+      for (const [, sel, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (/\.form-errors(?!\s+ul)|\.over-remove-warning(?!\s)/.test(sel)) expect(body, `${name}: ${sel.trim()}`).not.toMatch(/--color-(danger|warning)/);
+      }
+    }
+  });
+});
+
 describe('undo notice stacking', () => {
   it('on a phone it sits on the measured bottom bar and the measured action bar, with no assumed height', () => {
     const body = bodyIn(plain, '.undo-notice');

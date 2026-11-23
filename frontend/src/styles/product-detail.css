@@ -264,30 +264,18 @@
   width: 100%;
 }
 
-.form-errors {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-danger-bg);
-  color: var(--color-danger-fg);
-  border: 1px solid var(--color-danger-border);
-  border-radius: var(--radius-control);
-  font-size: var(--font-size-error);
-  line-height: var(--line-height-compact);
-}
-
-/* The alert box is a div; the list inside it keeps the bullet indent the old <ul role="alert"> had. */
+/* The stock-form errors are the shared .notice.notice--danger (base.css), which
+   draws the look. .form-errors stays as a layout hook only: the alert box is a
+   div, and the list inside it keeps the bullet indent the old <ul role="alert"> had. */
 .form-errors ul {
   margin: 0;
   padding-inline-start: calc(var(--space-5) - var(--space-3));
 }
 
+/* The over-removal dialog is the shared .notice.notice--warning (base.css), which
+   draws the look; this class only spaces it from what follows. */
 .over-remove-warning {
   margin-bottom: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-warning-bg);
-  color: var(--color-warning-fg);
-  border: 1px solid var(--color-warning-border);
-  border-radius: var(--radius-card);
 }
 
 .over-remove-warning p {
