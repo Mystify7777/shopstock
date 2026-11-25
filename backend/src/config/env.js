@@ -39,6 +39,43 @@ function isValidCorsOrigin(entry) {
   }
 }
 
+/**
+ * TRUST_PROXY is optional: the number of reverse proxies between the internet and
+ * this server (0 or more). Unset or blank means "leave Express's default alone", so
+ * a server reached directly behaves exactly as it always has. Express then trusts
+ * that many X-Forwarded-For hops, which is what lets the auth rate limiter see each
+ * client's own address instead of the proxy's. Only a whole, non-negative number is
+ * accepted: `true`, a list of addresses, a negative or a fractional value are not.
+ *
+ * @param {string | undefined} value
+ * @returns {{ ok: true, value: number | null } | { ok: false }}
+ */
+export function parseTrustProxy(value) {
+  const text = String(value ?? '').trim();
+  if (text === '') return { ok: true, value: null };
+  if (!/^\d+$/.test(text)) return { ok: false };
+  const hops = Number(text);
+  return Number.isSafeInteger(hops) ? { ok: true, value: hops } : { ok: false };
+}
+
+// In production the access-token secret must be a real one. Presence alone would
+// let the documented example value (or a short guessable one) boot and mint tokens
+// anyone could forge. Development and test keep the lighter, presence-only check.
+export const JWT_SECRET_MIN_LENGTH = 32;
+
+function isProduction(env) {
+  return String(env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+}
+
+// Every "change-me..." value in backend/.env.example is a placeholder, not a secret.
+function isPlaceholderSecret(value) {
+  return /^change-?me/i.test(value.trim());
+}
+
+function isAcceptableProductionJwtSecret(value) {
+  return value.trim().length >= JWT_SECRET_MIN_LENGTH && !isPlaceholderSecret(value);
+}
+
 const REQUIRED_VARS = [
   'MONGODB_URI',
   'JWT_ACCESS_SECRET',
@@ -58,8 +95,12 @@ const REQUIRED_VARS = [
  *   - PORT: optional; if present, must parse as a finite, positive integer
  *   - CORS_ORIGIN: a comma-separated list of one or more origins, each exactly
  *     scheme://host[:port] (http or https; no path, trailing slash or wildcard)
+ *   - TRUST_PROXY: optional; if present and non-blank, a whole number of proxy
+ *     hops, 0 or more
+ *   - JWT_ACCESS_SECRET: when NODE_ENV is "production", at least 32 characters
+ *     and not an example placeholder
  *
- * Other required values (MONGODB_URI, JWT secrets, etc.) are
+ * Other required values (MONGODB_URI, SEED_* etc.) are
  * presence-checked only here -- their shape is validated by whatever
  * actually consumes them (e.g. the Mongo connection module surfacing its
  * own connection error for a malformed URI), not duplicated here.
@@ -91,6 +132,14 @@ export function validateEnv(env = process.env) {
     }
   }
 
+  if (!parseTrustProxy(env.TRUST_PROXY).ok) {
+    invalid.push('TRUST_PROXY');
+  }
+
+  if (isProduction(env) && !missing.includes('JWT_ACCESS_SECRET') && !isAcceptableProductionJwtSecret(env.JWT_ACCESS_SECRET)) {
+    invalid.push('JWT_ACCESS_SECRET');
+  }
+
   if (env.PORT && env.PORT.trim() !== '') {
     const parsedPort = Number(env.PORT);
     if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
@@ -103,6 +152,13 @@ export function validateEnv(env = process.env) {
   }
   return { ok: true };
 }
+
+// What to do about an invalid value, shown next to its NAME. Never the value itself:
+// some of these are secrets.
+const INVALID_HINTS = {
+  JWT_ACCESS_SECRET: `in production it must be at least ${JWT_SECRET_MIN_LENGTH} characters and not the example placeholder`,
+  TRUST_PROXY: 'expected a whole number of proxy hops (0 or more), or leave it unset'
+};
 
 /**
  * Validate and, on failure, log a clear message and exit the process
@@ -121,7 +177,8 @@ export function validateEnv(env = process.env) {
  *   refreshTokenExpiresInDays: number,
  *   seedUsername: string,
  *   seedPassword: string,
- *   corsOrigins: string[]
+ *   corsOrigins: string[],
+ *   trustProxy: number | null
  * }}
  */
 export function loadConfig(env = process.env) {
@@ -132,7 +189,8 @@ export function loadConfig(env = process.env) {
       parts.push(`missing required environment variable(s): ${result.missing.join(', ')}`);
     }
     if (result.invalid.length > 0) {
-      parts.push(`invalid value for environment variable(s): ${result.invalid.join(', ')}`);
+      const described = result.invalid.map((key) => (INVALID_HINTS[key] ? `${key} (${INVALID_HINTS[key]})` : key));
+      parts.push(`invalid value for environment variable(s): ${described.join(', ')}`);
     }
     // eslint-disable-next-line no-console -- intentional startup diagnostic,
     // this is the one place a raw console.error is correct: the app is
@@ -153,6 +211,8 @@ export function loadConfig(env = process.env) {
     refreshTokenExpiresInDays: Number(env.REFRESH_TOKEN_EXPIRES_IN_DAYS),
     seedUsername: env.SEED_USERNAME,
     seedPassword: env.SEED_PASSWORD,
-    corsOrigins: parseCorsOrigins(env.CORS_ORIGIN)
+    corsOrigins: parseCorsOrigins(env.CORS_ORIGIN),
+    // null = TRUST_PROXY unset: createApp() then leaves Express's default alone.
+    trustProxy: parseTrustProxy(env.TRUST_PROXY).value
   };
 }

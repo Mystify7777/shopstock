@@ -1,6 +1,7 @@
 # ShopStock: rollout readiness (R10 Phase 3b)
 
 **Written:** 2026-11-23, after R10 Phase 3a, on `master` at `cc36fe0` plus the notice cleanup.
+**Updated** for the production deployment hardening change: sections 1.1, 1.2, 2, 3, 4 (G4 and G6) and 6.
 
 ## What this document is, and is not
 
@@ -41,8 +42,12 @@ Why the second is NO-GO, in one line each, each sourced in section 4:
   `backend/.env.example` set, and the seed script run once (`npm run seed`).
 - `CORS_ORIGIN` lists the exact origin the app is served from: `scheme://host[:port]`,
   no trailing slash, no path, no wildcard.
-- The frontend is built with `VITE_API_BASE_URL` set as described in
-  `frontend/.env.example` (empty means same origin).
+- The frontend is built with `VITE_API_BASE_URL` set to the backend's **HTTPS**
+  origin. A production build requires it and fails without it; "same origin" applies
+  only to development and preview builds (`docs/DEPLOYMENT.md`, section 6).
+- The backend runs with `NODE_ENV=production` and a real `JWT_ACCESS_SECRET` (at least
+  32 characters, not a placeholder), and `TRUST_PROXY` is set to the right number for
+  the host, which is **not guessed** (`docs/DEPLOYMENT.md`, section 8).
 - The pilot's purpose is to produce the evidence in section 3: the real-phone
   check (appendix A), the PWA behavior, sync against a real server, and
   concurrent edits (Phase 6E).
@@ -54,17 +59,18 @@ Why the second is NO-GO, in one line each, each sourced in section 4:
    location (G2).
 3. At least JSON export, so there is a backup path (G3).
 4. Phase 6E reconciled against its acceptance criteria (G5).
-5. PWA icons, if the app is to be installed (G4).
+5. Installation of the PWA confirmed on real devices (G4: the icon assets now exist).
 6. The real-phone checks in appendix A passed on iOS and Android.
 
 ## 2. Verified, and how
 
 | Area | Result | Method | Where the evidence stops |
 |---|---|---|---|
-| Frontend tests | **97 files, 2444 tests pass** | Vitest (jsdom), run on the final tree | jsdom has no layout; geometry is covered separately below |
-| Frontend build | Clean; emits a manifest and a service worker | `vite build` | The manifest's icons do not exist (G4) |
+| Frontend tests | **101 files, 2569 tests pass** | Vitest (jsdom), run on the final tree | jsdom has no layout; geometry is covered separately below |
+| Frontend build | A production build **fails** unless `VITE_API_BASE_URL` is a valid HTTPS origin (missing, `http://`, a path, `localhost` and loopback addresses are all refused); with one it is clean, and a trailing slash is removed. `npm run verify:build` checks the manifest, the icons it names (present, real PNGs, declared sizes), the service worker and its precache, the API origin in the bundle, and that no loopback origin is baked in | `vite build`; `npm run verify:build`; real builds in the test suite | Checks the build **artifact** only. Installing the app and a real host are not verified (G4) |
 | Whitespace and line endings | `git diff --check` clean; no CRLF in changed files | git, and a byte check | |
-| Backend, database-free tests | **83 tests, 19 suites, 0 fail** | `node --test` on the files that need no database | The full backend suite was **not run** (section 3) |
+| Backend, database-free tests | **117 tests, 25 suites, 0 fail** (and 11 in `app.test.js`) | `node --test` on the files that need no database | The full backend suite was **not run** (section 3) |
+| Deployment-path rehearsal (local) | A production-mode backend, a real MongoDB 7 replica set, the production frontend build on a **different origin** with browser CORS **enforced**, and the 14-step smoke test all pass: sign-in, reload, create a product, add and remove stock, history, reload, an offline change queued and then delivered to the server, sign-out and sign-in, plus the manifest, icons and an active service worker. With a real proxy hop and clients on separate addresses, login limiting is shared with `TRUST_PROXY` unset and per client with it set to 1 | A local script against locally started services | **Not a deployment.** No Vercel, backend host, Atlas, real HTTPS or hosting proxy; see section 3 |
 | Browser audit | 24 screens and states, no horizontal overflow, no interactive target under 44px (inline text links excepted), no duplicate ids, one `h1` per screen, no console errors | Headless Chromium 153; screens and data created through the real UI; viewports 320, 375, 768, 1280 and 667×375 | The API was **stubbed** (login, refresh and sync writes); no real backend |
 | Accessibility (automated) | No axe-core violations at rest (WCAG 2 A and AA, best-practice) | axe-core on each screen and state | Automated rules cover only part of WCAG; no screen reader was used |
 | Real 200% text | No overflow, targets still 44px or larger, no axe violations; the crash fallback is flat and unclipped | Chromium started with `--blink-settings=defaultFontSize=32` | See the methodology note in appendix B |
@@ -96,8 +102,14 @@ Why the second is NO-GO, in one line each, each sourced in section 4:
 - **Phase 6E acceptance** (G5).
 - **Continuous integration.** There is none (G6).
 - **A real offline session** (airplane mode) was not exercised in R10.
-- **PWA install, and the service-worker update flow.** Install cannot work
-  without icons (G4); the update flow is unverified.
+- **PWA installation on a real device, and the service-worker update flow.** The
+  icon assets now exist and the local build verification checks them (G4), but
+  installing the app and updating it are unverified.
+- **Anything about a real deployment:** Vercel (including its single-page-app
+  rewrite), the backend host, MongoDB Atlas, real HTTPS, production CORS against the
+  real origins, cold starts, and the right `TRUST_PROXY` value for the host. The
+  deployed smoke test (`docs/DEPLOYMENT.md`, section 12) has not been run. The local
+  rehearsal above is evidence that the architecture works, not that a deployment does.
 - **A screen reader** (VoiceOver, TalkBack or NVDA), and real-device performance
   or search timing with a realistic number of products.
 - **Lighthouse scores** have not been recorded.
@@ -112,9 +124,9 @@ stated. Each needs an owner decision on scheduling; none is fixed by R10.
 | **G1** | **No pull or reconciliation (issue #39).** The app only sends changes to the server and never fetches them. | A second phone or family member's device starts empty. Clearing browser storage loses local data the server holds but the app cannot restore. This conflicts with the intent of PRD §34 to §35. |
 | **G2** | **The product form is name and notes only.** Nothing yet assigns classifications, unit, selling price, margin, low-stock threshold, photo or initial quantity. | Categories, locations and tags can be created but never assigned. Every new product shows as out of stock until stock is added. No price or profit totals are possible. |
 | **G3** | **No export.** Phase 8 is not started, and JSON and CSV export are V1 requirements (PRD §36). | Together with G1 there is no backup or restore path. |
-| **G4** | **No PWA icons** (finding N-02). `public/icons/` is empty, so the manifest's icons, `favicon.ico` and `apple-touch-icon.png` do not exist. | The app cannot be installed as a PWA, and the manifest has no icon. |
+| **G4** | **PWA assets are present; installation is unverified.** The icon assets now exist (`icon-192`, `icon-512`, `icon-512-maskable`, `apple-touch-icon`, `favicon.ico`). The manifest declares the 192 and 512 icons and the service worker precaches them; the local build verification checks that. The maskable icon exists but the manifest does not reference it yet. | Installing the app on a real device, and the service-worker update flow, are **not verified**. This row does not say the PWA works. |
 | **G5** | **Phase 6E is unreconciled.** The last-write-wins code and commits labeled 6E to 6G are in the repository, but whether 6E-2, 6E-3, 6F and 6G met their acceptance criteria was not verified. | Concurrent edits on two devices may not behave as designed. Needs its own reconciliation pass. |
-| **G6** | **No CI or deployment configuration** in the repository. The frontend's variable is now documented (`frontend/.env.example`), but nothing builds, tests or deploys automatically. | Releases are manual and unchecked by automation. |
+| **G6** | **No CI.** Deployment configuration is now documented (`docs/DEPLOYMENT.md`) and guarded: a production build fails without a valid HTTPS `VITE_API_BASE_URL`, `frontend/vercel.json` carries the single-page-app rewrite, and the backend has `TRUST_PROXY` and production `JWT_ACCESS_SECRET` checks. But nothing runs the tests or builds automatically, and the Vercel rewrite, production CORS and the right `TRUST_PROXY` value are unverified on a real deployment. | Releases are manual. The build guard runs wherever the app is built; the rest runs only when someone runs it. |
 
 Lower priority and recorded in `docs/PROGRESS.md`: header and content columns do
 not align on wide screens (N-06); classification rows have no consistent shape
@@ -171,8 +183,8 @@ Not part of R10, and each needs an owner decision:
 2. A product-form completeness phase (G2).
 3. An early JSON export, then CSV (G3).
 4. Phase 6E reconciliation (G5).
-5. PWA icons, `theme-color` and the service-worker update flow (G4).
-6. CI and deployment configuration (G6).
+5. PWA installation on real devices, `theme-color`, the maskable icon in the manifest, and the service-worker update flow (G4).
+6. CI, and running the deployed smoke test against the real deployment (G6).
 7. The real-device checks (appendix A), and a real-backend pilot run.
 
 ## Appendix A: real-phone checklist

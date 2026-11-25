@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:preview": "vite build --mode preview",
+    "verify:build": "node scripts/verify-build.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

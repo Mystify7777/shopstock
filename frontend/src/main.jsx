@@ -19,6 +19,7 @@ import { createSyncStatusObserver } from './data/sync/syncStatusObserver.js';
 import AppErrorBoundary from './components/AppErrorBoundary.jsx';
 import { triggerStartupSync, registerConnectivitySyncTrigger } from './data/sync/syncTriggers.js';
 import { AppProvider } from './contexts/AppContext.jsx';
+import { normalizeApiBaseUrl } from './config/apiBaseUrl.js';
 import './styles/tokens.css';
 import './styles/base.css';
 import './styles/shell.css';
@@ -69,7 +70,7 @@ import './styles/product-form.css';
 // tree would be an unnecessary indirection (locked during Phase 6D-0's
 // review: triggers connect directly to authManager/syncDrainer).
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 const db = createDatabase();
 const productRepository = createProductRepository(db);

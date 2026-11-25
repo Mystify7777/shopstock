@@ -6,7 +6,7 @@
     "verify": "npm run verify:frontend && npm run verify:backend && npm run verify:build && npm run verify:diff",
     "verify:frontend": "npm --prefix frontend test",
     "verify:backend": "npm --prefix backend test",
-    "verify:build": "npm --prefix frontend run build",
+    "verify:build": "npm --prefix frontend run verify:build",
     "verify:diff": "git diff --check"
   }
 }

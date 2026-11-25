@@ -27,6 +27,7 @@ import { createProductChangeEventRouter } from './routes/productChangeEventRoute
  *
  * @param {{
  *   corsOrigin?: string | string[],
+ *   trustProxy?: number | null,
  *   jwtAccessSecret?: string,
  *   jwtAccessExpiresIn?: string,
  *   refreshTokenExpiresInDays?: number
@@ -37,11 +38,22 @@ import { createProductChangeEventRouter } from './routes/productChangeEventRoute
  *   for the auth routes to function correctly; tests that don't exercise
  *   auth routes may omit them, since createApp() itself never reads
  *   process.env directly (all config flows in as an explicit parameter,
- *   consistent with config/env.js's own testability design).
+ *   consistent with config/env.js's own testability design). trustProxy is
+ *   the number of reverse-proxy hops to trust (TRUST_PROXY); omitted or null
+ *   leaves Express's default (trust none) untouched.
  * @returns {import('express').Express}
  */
 export function createApp(options = {}) {
   const app = express();
+
+  // Behind a hosting proxy every request arrives from the proxy's address, so the
+  // auth rate limiter (keyed on req.ip) would put all clients in one bucket.
+  // Trusting the real number of hops makes req.ip the client's own address. It is
+  // set only when configured: unset keeps Express's default, so a server reached
+  // directly behaves exactly as before.
+  if (options.trustProxy !== undefined && options.trustProxy !== null) {
+    app.set('trust proxy', options.trustProxy);
+  }
 
   app.use(cors({ origin: options.corsOrigin || false }));
   app.use(express.json());

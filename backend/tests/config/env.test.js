@@ -1,6 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateEnv, loadConfig, parseCorsOrigins } from '../../src/config/env.js';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { validateEnv, loadConfig, parseCorsOrigins, parseTrustProxy, JWT_SECRET_MIN_LENGTH } from '../../src/config/env.js';
 
 function completeEnv(overrides = {}) {
   return {
@@ -142,7 +144,8 @@ describe('loadConfig', () => {
       refreshTokenExpiresInDays: 90,
       seedUsername: 'shopowner',
       seedPassword: 'test-password',
-      corsOrigins: ['http://localhost:5173']
+      corsOrigins: ['http://localhost:5173'],
+      trustProxy: null
     });
   });
 
@@ -219,4 +222,180 @@ describe('CORS_ORIGIN allow-list', () => {
       assert.deepEqual(result.missing, []);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Production deployment hardening: TRUST_PROXY and production JWT validation.
+// ---------------------------------------------------------------------------
+
+const ENV_MODULE_URL = new URL('../../src/config/env.js', import.meta.url).href;
+
+// backend/.env.example as a plain env object (KEY=value lines).
+function exampleEnv() {
+  const env = {};
+  for (const line of readFileSync(new URL('../../.env.example', import.meta.url), 'utf8').replace(/\r\n/g, '\n').split('\n')) {
+    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (match) env[match[1]] = match[2];
+  }
+  return env;
+}
+
+// loadConfig()'s failure path calls process.exit(1), so it is run in a child
+// process; the child sees only the variables given here.
+function loadConfigInChild(env) {
+  const code = `import { loadConfig } from ${JSON.stringify(ENV_MODULE_URL)}; const c = loadConfig(); console.log(JSON.stringify({ trustProxy: c.trustProxy, nodeEnv: c.nodeEnv }));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env, encoding: 'utf8' });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+describe('parseTrustProxy', () => {
+  test('unset, empty and blank all mean "not configured" (null), so Express keeps its default', () => {
+    for (const value of [undefined, null, '', '   ']) {
+      assert.deepEqual(parseTrustProxy(value), { ok: true, value: null });
+    }
+  });
+
+  test('a whole, non-negative number is the hop count', () => {
+    for (const [value, hops] of [['0', 0], ['1', 1], ['2', 2], ['10', 10], [' 3 ', 3]]) {
+      assert.deepEqual(parseTrustProxy(value), { ok: true, value: hops });
+    }
+  });
+
+  test('anything else is rejected: negative, fractional, boolean, list, exponent, hex, words, overflow', () => {
+    for (const value of ['-1', '1.5', 'abc', 'true', 'false', '1e2', '0x1', '2 hops', '1,2', 'loopback', '+1', '99999999999999999999']) {
+      assert.deepEqual(parseTrustProxy(value), { ok: false }, `expected ${JSON.stringify(value)} to be rejected`);
+    }
+  });
+});
+
+describe('TRUST_PROXY in validateEnv / loadConfig', () => {
+  test('unset: valid, and the config says null (Express default untouched)', () => {
+    assert.deepEqual(validateEnv(completeEnv()), { ok: true });
+    assert.equal(loadConfig(completeEnv()).trustProxy, null);
+  });
+
+  test('an empty TRUST_PROXY= line, as copied from .env.example, is the same as unset', () => {
+    assert.deepEqual(validateEnv(completeEnv({ TRUST_PROXY: '' })), { ok: true });
+    assert.equal(loadConfig(completeEnv({ TRUST_PROXY: '' })).trustProxy, null);
+  });
+
+  test('a valid hop count is accepted and parsed to a number', () => {
+    for (const [value, hops] of [['0', 0], ['1', 1], ['2', 2]]) {
+      assert.equal(loadConfig(completeEnv({ TRUST_PROXY: value })).trustProxy, hops);
+    }
+  });
+
+  test('an invalid value is reported by name, and nothing else', () => {
+    for (const value of ['-1', '1.5', 'true', 'abc']) {
+      const result = validateEnv(completeEnv({ TRUST_PROXY: value }));
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.invalid, ['TRUST_PROXY']);
+      assert.deepEqual(result.missing, []);
+    }
+  });
+
+  test('an invalid value stops startup with a clear message that says what is expected', () => {
+    const result = loadConfigInChild({ ...completeEnv({ TRUST_PROXY: 'yes' }), PATH: process.env.PATH });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing to start: invalid value for environment variable\(s\): TRUST_PROXY \(expected a whole number of proxy hops \(0 or more\), or leave it unset\)/);
+  });
+
+  test('a valid value starts, through the real loadConfig', () => {
+    const result = loadConfigInChild({ ...completeEnv({ TRUST_PROXY: '2' }), PATH: process.env.PATH });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { trustProxy: 2, nodeEnv: 'test' });
+  });
+});
+
+describe('JWT_ACCESS_SECRET in production', () => {
+  const production = (secret) => completeEnv({ NODE_ENV: 'production', JWT_ACCESS_SECRET: secret });
+  const goodSecret = 'k3Jx9QvT7mN2pLw8RzYb4HcD6sFa1GeU0iOoV5tXnMq';
+
+  test('a missing secret is reported as missing, as in every environment', () => {
+    const env = production(undefined);
+    delete env.JWT_ACCESS_SECRET;
+    const result = validateEnv(env);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.missing, ['JWT_ACCESS_SECRET']);
+    assert.deepEqual(result.invalid, []);
+  });
+
+  test('a blank secret is missing, not a second, "invalid" report', () => {
+    const result = validateEnv(production('    '));
+    assert.deepEqual(result.missing, ['JWT_ACCESS_SECRET']);
+    assert.deepEqual(result.invalid, []);
+  });
+
+  test('the placeholder documented in .env.example is rejected', () => {
+    const placeholder = exampleEnv().JWT_ACCESS_SECRET;
+    assert.ok(placeholder, 'the example documents a JWT_ACCESS_SECRET placeholder');
+    // It is long enough to pass a length check, so only the placeholder rule rejects it.
+    assert.ok(placeholder.length >= JWT_SECRET_MIN_LENGTH);
+    const result = validateEnv(production(placeholder));
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.invalid, ['JWT_ACCESS_SECRET']);
+  });
+
+  test('any "change-me" style placeholder is rejected, whatever its case or length', () => {
+    for (const value of ['change-me', 'CHANGE-ME-to-a-long-random-string-please-do', 'changeme-changeme-changeme-changeme', 'Change-Me-Before-Seeding-Now-Really']) {
+      assert.deepEqual(validateEnv(production(value)).invalid, ['JWT_ACCESS_SECRET'], `expected ${value} to be rejected`);
+    }
+  });
+
+  test(`a secret shorter than ${JWT_SECRET_MIN_LENGTH} characters is rejected; exactly ${JWT_SECRET_MIN_LENGTH} is accepted`, () => {
+    assert.deepEqual(validateEnv(production('a'.repeat(JWT_SECRET_MIN_LENGTH - 1))).invalid, ['JWT_ACCESS_SECRET']);
+    assert.deepEqual(validateEnv(production('a'.repeat(JWT_SECRET_MIN_LENGTH))), { ok: true });
+  });
+
+  test('padding does not count towards the length', () => {
+    assert.deepEqual(validateEnv(production(`${'a'.repeat(JWT_SECRET_MIN_LENGTH - 1)}   `)).invalid, ['JWT_ACCESS_SECRET']);
+  });
+
+  test('a real-looking secret is accepted', () => {
+    assert.deepEqual(validateEnv(production(goodSecret)), { ok: true });
+    assert.deepEqual(validateEnv(production('9f2c'.repeat(16))), { ok: true });
+  });
+
+  test('"Production" in any case, with whitespace, counts as production', () => {
+    for (const nodeEnv of ['production', 'Production', 'PRODUCTION', ' production ']) {
+      assert.deepEqual(validateEnv(completeEnv({ NODE_ENV: nodeEnv, JWT_ACCESS_SECRET: 'short' })).invalid, ['JWT_ACCESS_SECRET'], `NODE_ENV=${JSON.stringify(nodeEnv)}`);
+    }
+  });
+
+  test('outside production nothing changes: short and placeholder secrets still boot', () => {
+    for (const nodeEnv of ['development', 'test', 'staging', 'prod', undefined]) {
+      for (const secret of ['short', 'change-me-to-a-long-random-string']) {
+        const env = completeEnv({ NODE_ENV: nodeEnv, JWT_ACCESS_SECRET: secret });
+        if (nodeEnv === undefined) delete env.NODE_ENV;
+        assert.deepEqual(validateEnv(env), { ok: true }, `NODE_ENV=${nodeEnv} secret=${secret}`);
+      }
+    }
+  });
+
+  test('.env.example copied as-is cannot boot in production, but is fine for development', () => {
+    const example = exampleEnv();
+    assert.deepEqual(validateEnv({ ...example, NODE_ENV: 'development' }), { ok: true });
+    const production = validateEnv({ ...example, NODE_ENV: 'production' });
+    assert.equal(production.ok, false);
+    assert.ok(production.invalid.includes('JWT_ACCESS_SECRET'));
+  });
+
+  test('the startup message names the variable and what is required, and never prints the secret', () => {
+    const secret = 'short-secret-that-must-never-be-printed';
+    const shortSecret = 'tiny-9Qz';
+    for (const value of [shortSecret, secret.slice(0, 20)]) {
+      const result = loadConfigInChild({ ...production(value), PATH: process.env.PATH });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /invalid value for environment variable\(s\): JWT_ACCESS_SECRET \(in production it must be at least 32 characters and not the example placeholder\)/);
+      assert.ok(!result.stderr.includes(value), 'the secret must not appear in the startup message');
+      assert.ok(!result.stdout.includes(value));
+    }
+  });
+
+  test('a valid production secret starts, through the real loadConfig, with the secret passed through unchanged', () => {
+    const result = loadConfigInChild({ ...production(goodSecret), PATH: process.env.PATH });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).nodeEnv, 'production');
+    assert.equal(loadConfig(production(goodSecret)).jwtAccessSecret, goodSecret);
+  });
 });

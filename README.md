@@ -36,7 +36,11 @@ npm install
 npm run dev
 ```
 
-Environment variables are documented in `backend/.env.example`.
+Environment variables are documented in `backend/.env.example` and
+`frontend/.env.example`. To deploy, see `docs/DEPLOYMENT.md`. A production
+frontend build (`npm run build` in `frontend/`) requires `VITE_API_BASE_URL` to be
+the backend's HTTPS origin and fails otherwise; `npm run build:preview` is the
+explicit way to build against a local backend.
 
 ## Verifying changes
 
@@ -50,7 +54,10 @@ This runs, in order, and stops at the first failure:
 
 1. `verify:frontend` — the frontend test suite (`vitest run`)
 2. `verify:backend` — the backend test suite (`node --test`)
-3. `verify:build` — the frontend production build (`vite build`)
+3. `verify:build` — builds the frontend into a temporary directory with the
+   production contract and checks the result (manifest, icons, service worker,
+   API origin, no loopback origin baked in); it never touches `frontend/dist`,
+   and needs no configuration (see `docs/DEPLOYMENT.md`)
 4. `verify:diff` — `git diff --check` (whitespace errors)
 
 Each stage can also be run on its own (`npm run verify:frontend`, etc.). The
