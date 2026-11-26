@@ -67,6 +67,10 @@ one. The backend is a long-running Node process:
 | Node | Tested on Node 22. |
 | Health check | `GET /api/health`. No authentication. Returns `{"status":"ok","db":"connected"}`; it reports the database state but stays 200 if the database is down, so it measures that the process is up, not that Mongo is reachable. |
 
+**On Vercel** the backend runs as a serverless function through `backend/index.js` rather
+than `server.js`; see section 13. `npm start` / `server.js` is for a host that runs one
+long-lived process.
+
 The server **refuses to start**, with a message naming the variable and never its
 value, if a required variable is missing or invalid (section 5), or if it cannot reach
 MongoDB within 10 seconds. A platform that restarts a crashed process will therefore
@@ -251,6 +255,8 @@ nothing. It prints the username, never the password.
 7. Set `TRUST_PROXY` to the right number for your host and run the check in section 8.
 8. Run the smoke test (section 12).
 
+On Vercel with one project for both, follow section 13 instead of steps 2 to 6.
+
 ## 11. HTTPS
 
 Use HTTPS for both origins. A page served over HTTPS cannot call an `http://` API (the
@@ -291,3 +297,136 @@ While doing this, confirm:
 Not covered by this procedure, and not verified by the repository's own checks: physical
 iOS and Android devices, a screen reader, the soft keyboard, cold-start delays on a free
 host, and the service-worker update flow.
+
+## 13. Vercel Services: frontend and backend in one project
+
+Vercel Services deploys both apps as one Vercel project on **one domain**. Vercel labels it
+**Beta** (available on all plans). The API is then **same-origin** with the frontend, so
+there is no cross-origin traffic and no CORS preflight to get right. Two separate projects
+remain the fallback (end of this section).
+
+### What is in the repository
+
+- **`vercel.json` (repository root)** defines the two services and routes to them:
+  `/api/*` goes to the backend, every other path to the frontend, the catch-all last.
+  It starts from the file Vercel's import screen suggests, with two additions:
+  - the backend names its entry, `index.js`, explicitly, because `backend/` also holds
+    `server.js`, which listens on a port and exports nothing;
+  - the frontend service has a rewrite sending any non-file path to `/index.html`, so a
+    deep link survives a reload. (`frontend/vercel.json` does the same for a standalone
+    frontend project; it is not relied on here.)
+
+  If Vercel rejects either addition, delete it: what remains is exactly Vercel's own
+  suggestion. The effect would be a missing entry (the backend would not start) or deep
+  links that 404, and the smoke test would show which.
+- **`backend/index.js`** default-exports the Express app that Vercel runs as a function
+  (`backend/src/serverless.js`). It reads the environment on the first request, opens the
+  MongoDB connection on demand and reuses it, keeps the pool small (10), and answers a
+  missing or invalid setting with the standard 500 and a log line naming the variables,
+  never their values. It never calls `process.exit`. Everything else is the same app.
+- Vercel forwards the original path, so the backend receives `/api/auth/login` and its
+  routes, which already start with `/api`, match with no change.
+
+### Importing the project
+
+Import the repository, leave the preset on **Services** and the root directory on `./`,
+and do **not** use "Import single project" (that creates the separate projects). Add the
+variables below before the first deploy.
+
+### Environment variables
+
+Services share **one list per project**: there is no per-service setting. What separates
+them is the name (only `VITE_*` values reach the browser bundle; the backend reads the
+rest at runtime) and the **environment** each variable is scoped to.
+
+| Variable | Value | Environments | Sensitive |
+|---|---|---|---|
+| `VITE_API_BASE_URL` | The site's own origin, `https://<your-project-domain>` (explicit, even though it is the same site) | Production **and** Preview | No |
+| `MONGODB_URI` | The Atlas connection string, with a database name (see below) | **Production only** | Yes |
+| `JWT_ACCESS_SECRET` | A generated secret, at least 32 characters (section 5) | **Production only** | Yes |
+| `SEED_PASSWORD` | The shop account's password | **Production only** | Yes |
+| `SEED_USERNAME` | The shop account's username | Production only | No |
+| `NODE_ENV` | `production` | Production only | No |
+| `JWT_ACCESS_EXPIRES_IN` | `15m` | Production only | No |
+| `REFRESH_TOKEN_EXPIRES_IN_DAYS` | `90` | Production only | No |
+| `CORS_ORIGIN` | The same origin as `VITE_API_BASE_URL`. Same-origin requests do not use CORS, but the server will not start without a valid value | Production only | No |
+| `TRUST_PROXY` | `1` (see below) | Production only | No |
+
+The backend secrets are scoped to Production on purpose. If a Preview deployment had them,
+every branch's code would run against the production database. A Preview deployment then
+builds (it needs `VITE_API_BASE_URL`, or the build guard stops it) but its API refuses to
+start for lack of variables, which is safe. Give previews a separate test database if you
+ever want them to work.
+
+The project's name decides its domain, usually `<name>.vercel.app`, but Vercel adds a suffix
+if that is taken. Read the real domain after creating the project and set both URL variables
+from it. **Decide your final domain before entering real data**: the app's local data lives
+per origin, and there is no inbound sync yet (G1), so moving to another domain later starts
+empty.
+
+### The MongoDB connection string
+
+- **Include a database name** in the path, for example
+  `mongodb://<user>:<password>@<host>:27017,…/shopstock?ssl=true&replicaSet=<set>&authSource=admin`.
+  Without one the driver uses a database called `test`. The seed script uses the same string.
+- **Use the real password**, URL-encoded if it has special characters, with no `<` `>`.
+- A `replicaSet=` parameter in the string confirms a replica set, which stock writes need.
+- **Atlas Network Access.** Vercel Functions use changing outbound addresses, so Atlas has to
+  accept connections from anywhere (`0.0.0.0/0`) unless the project uses Vercel's **Static IPs**,
+  a Pro or Enterprise plan feature. With `0.0.0.0/0` only the credentials stand between the
+  internet and the database, so use a long random password and a dedicated database user with
+  read and write access to this one database only, not the default administrator.
+
+### `TRUST_PROXY` on Vercel
+
+Vercel sets `X-Forwarded-For` to the visitor's public address and replaces any value the
+client sent, so one trusted hop is expected to be right: `TRUST_PROXY=1`. That is the
+documented behavior, not something this repository has observed on a deployment. Run the
+check in section 8 after deploying: `400 … 400 429 429` is correct, all `400` means the number
+is too high.
+
+### After the first deploy
+
+1. Seed the account once, from your machine, with the production environment (section 9).
+2. `GET https://<your-domain>/api/health` returns `{"status":"ok","db":"connected"}`. The very
+   first request after a quiet period may be slow: the instance starts and connects.
+3. Run the smoke test (section 12). Step 8, reloading a deep link, checks the frontend
+   rewrite.
+
+### Fallback: two projects
+
+If Services does not work out, import the same repository twice, once with Root Directory
+`frontend` and once with `backend` (a Vercel Express project, which has to pick `index.js`
+as its entry rather than `server.js`; this has not been verified), then
+set `VITE_API_BASE_URL` to the backend project's origin and `CORS_ORIGIN` to the frontend's.
+The rest of this document applies as written. Cross-origin means CORS is enforced, and the
+backend project does not need a `vercel.json`.
+
+### What has and has not been checked
+
+Checked in the repository's tests and a local rehearsal: the serverless app's connection
+handling, its error behavior, `TRUST_PROXY` through the wrapper, and that `vercel.json` and
+the backend entry agree. **Not checked, because it needs Vercel itself:** that Vercel accepts
+this `vercel.json` (including the `entrypoint` and the frontend rewrite), runs
+`backend/index.js` as intended, builds the Vite service, and routes as documented; Atlas from
+Vercel; the real `TRUST_PROXY` value; cold-start times.
+
+## 14. Known limitations on a serverless host
+
+- **The login and refresh rate limit is per instance.** Its counters live in memory, so each
+  running instance counts for itself, and a new instance starts at zero. With low traffic there
+  is usually one warm instance and it behaves like a normal limit, but it is not a reliable
+  defence against someone deliberately spreading attempts. A shared store would fix it. Until
+  then, use a long random password for the shop account.
+- **Cold starts.** The first request to a cold instance also opens the database connection,
+  which can take a few seconds. A failed attempt answers 500 and the next request retries, and
+  a connection that dropped is reopened the same way (both were exercised against a real
+  MongoDB). While MongoDB is unreachable, a request waits up to 10 seconds before it fails; if
+  the host's own function time limit is shorter, the host's timeout is what the client sees.
+- **One pool per instance** (10 connections), so several instances can open several pools.
+  This is small for an Atlas free cluster, but it is not unlimited.
+- **Services is Beta.** Vercel may change it.
+- **Plan terms.** Vercel's Hobby plan has been described as for personal, non-commercial use.
+  Check its current terms against how the shop will use this.
+- **The seed password is not checked.** The server rejects a placeholder `JWT_ACCESS_SECRET`
+  in production, but not a placeholder `SEED_PASSWORD`. Choose a strong one.

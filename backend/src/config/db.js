@@ -41,7 +41,11 @@ export async function connectDb(uri, options = {}) {
   // not deferred into a mysterious hang on the first request.
   mongoose.set('bufferCommands', false);
   return mongoose.connect(uri, {
-    serverSelectionTimeoutMS: options.serverSelectionTimeoutMS ?? 10000
+    serverSelectionTimeoutMS: options.serverSelectionTimeoutMS ?? 10000,
+    // Left to the driver's default unless asked for: a serverless host runs many
+    // short-lived instances and passes a small pool so they cannot exhaust the
+    // database's connection limit (src/serverless.js).
+    ...(options.maxPoolSize ? { maxPoolSize: options.maxPoolSize } : {})
   });
 }
 

@@ -184,24 +184,56 @@ const INVALID_HINTS = {
 export function loadConfig(env = process.env) {
   const result = validateEnv(env);
   if (!result.ok) {
-    const parts = [];
-    if (result.missing.length > 0) {
-      parts.push(`missing required environment variable(s): ${result.missing.join(', ')}`);
-    }
-    if (result.invalid.length > 0) {
-      const described = result.invalid.map((key) => (INVALID_HINTS[key] ? `${key} (${INVALID_HINTS[key]})` : key));
-      parts.push(`invalid value for environment variable(s): ${described.join(', ')}`);
-    }
     // eslint-disable-next-line no-console -- intentional startup diagnostic,
     // this is the one place a raw console.error is correct: the app is
     // refusing to boot, before any logging infrastructure exists.
     console.error(
-      `[ShopStock backend] Refusing to start: ${parts.join('; ')}. ` +
+      `[ShopStock backend] Refusing to start: ${describeEnvFailure(result)}. ` +
       'Copy backend/.env.example to backend/.env and fill in real values.'
     );
     process.exit(1);
   }
 
+  return buildConfig(env);
+}
+
+/**
+ * The same validation as loadConfig(), for a host that must not exit the process
+ * (a serverless function: process.exit would kill the instance on every request).
+ * Throws an Error whose message names the missing or invalid variables, never
+ * their values; returns the same config object otherwise.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {ReturnType<typeof loadConfig>}
+ */
+export function readConfig(env = process.env) {
+  const result = validateEnv(env);
+  if (!result.ok) {
+    throw new Error(`[ShopStock backend] Cannot start: ${describeEnvFailure(result)}. Set them in the host's environment variables (see docs/DEPLOYMENT.md).`);
+  }
+  return buildConfig(env);
+}
+
+/**
+ * What is wrong with an environment, in words: variable NAMES and what is expected,
+ * never a value (some are secrets).
+ *
+ * @param {{ missing: string[], invalid: string[] }} result a failed validateEnv() result
+ * @returns {string}
+ */
+export function describeEnvFailure(result) {
+  const parts = [];
+  if (result.missing.length > 0) {
+    parts.push(`missing required environment variable(s): ${result.missing.join(', ')}`);
+  }
+  if (result.invalid.length > 0) {
+    const described = result.invalid.map((key) => (INVALID_HINTS[key] ? `${key} (${INVALID_HINTS[key]})` : key));
+    parts.push(`invalid value for environment variable(s): ${described.join(', ')}`);
+  }
+  return parts.join('; ');
+}
+
+function buildConfig(env) {
   return {
     mongodbUri: env.MONGODB_URI,
     port: Number(env.PORT) || 4000,
