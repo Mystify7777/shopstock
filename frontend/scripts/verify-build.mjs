@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Verifies a ShopStock frontend BUILD ARTIFACT. It checks what was built; it does
 // not check a deployment (no network, no hosting, no real API).
 //
